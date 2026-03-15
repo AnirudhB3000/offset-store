@@ -13,6 +13,19 @@
 
 static const uint64_t OFFSET_STORE_REGION_MAGIC = UINT64_C(0x4f464653544f5245);
 
+/*
+ * The shared header lives at offset zero in every mapping. Keeping it private
+ * prevents callers from depending on binary layout details that should remain
+ * an implementation concern of the region module.
+ */
+typedef struct {
+    uint64_t magic;
+    uint32_t version;
+    uint32_t reserved;
+    uint64_t total_size;
+    pthread_mutex_t mutex;
+} ShmRegionHeader;
+
 static void shm_region_reset(ShmRegion *region)
 {
     if (region == NULL) {
@@ -74,63 +87,81 @@ static bool shm_region_validate_header(const ShmRegion *region)
     return true;
 }
 
-static bool shm_region_init_mutex(ShmRegionHeader *header)
+static const ShmRegionHeader *shm_region_header(const ShmRegion *region)
+{
+    if (region == NULL || region->base == NULL) {
+        return NULL;
+    }
+
+    return (const ShmRegionHeader *) region->base;
+}
+
+static ShmRegionHeader *shm_region_header_mut(ShmRegion *region)
+{
+    if (region == NULL || region->base == NULL) {
+        return NULL;
+    }
+
+    return (ShmRegionHeader *) region->base;
+}
+
+static OffsetStoreStatus shm_region_init_mutex(ShmRegionHeader *header)
 {
     pthread_mutexattr_t attr;
 
     if (header == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
     if (pthread_mutexattr_init(&attr) != 0) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     if (pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) != 0) {
         pthread_mutexattr_destroy(&attr);
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     if (pthread_mutex_init(&header->mutex, &attr) != 0) {
         pthread_mutexattr_destroy(&attr);
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     pthread_mutexattr_destroy(&attr);
-    return true;
+    return OFFSET_STORE_STATUS_OK;
 }
 
-bool shm_region_create(ShmRegion *out_region, const char *name, size_t size)
+OffsetStoreStatus shm_region_create(ShmRegion *out_region, const char *name, size_t size)
 {
     int fd;
     ShmRegionHeader *header;
+    OffsetStoreStatus status;
 
     if (out_region == NULL || name == NULL || !shm_region_is_size_valid(size)) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
     shm_region_reset(out_region);
 
     fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        return false;
+        if (errno == EEXIST) {
+            return OFFSET_STORE_STATUS_ALREADY_EXISTS;
+        }
+
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     if (ftruncate(fd, (off_t) size) != 0) {
         close(fd);
         shm_unlink(name);
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     if (!shm_region_map_fd(out_region, fd, size, true)) {
         close(fd);
         shm_unlink(name);
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     /*
@@ -142,149 +173,165 @@ bool shm_region_create(ShmRegion *out_region, const char *name, size_t size)
     header->version = OFFSET_STORE_REGION_VERSION;
     header->reserved = 0;
     header->total_size = (uint64_t) out_region->size;
-    if (!shm_region_init_mutex(header)) {
+    status = shm_region_init_mutex(header);
+    if (status != OFFSET_STORE_STATUS_OK) {
         shm_region_close(out_region);
         shm_unlink(name);
-        return false;
+        return status;
     }
-    return true;
+    return OFFSET_STORE_STATUS_OK;
 }
 
-bool shm_region_open(ShmRegion *out_region, const char *name)
+OffsetStoreStatus shm_region_open(ShmRegion *out_region, const char *name)
 {
     int fd;
     struct stat st;
 
     if (out_region == NULL || name == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
     shm_region_reset(out_region);
 
     fd = shm_open(name, O_RDWR, 0);
     if (fd < 0) {
-        return false;
+        if (errno == ENOENT) {
+            return OFFSET_STORE_STATUS_NOT_FOUND;
+        }
+
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     if (fstat(fd, &st) != 0 || st.st_size <= 0) {
         close(fd);
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     if (!shm_region_map_fd(out_region, fd, (size_t) st.st_size, false)) {
         close(fd);
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     if (!shm_region_validate_header(out_region)) {
         shm_region_close(out_region);
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
-    return true;
+    return OFFSET_STORE_STATUS_OK;
 }
 
-bool shm_region_close(ShmRegion *region)
+OffsetStoreStatus shm_region_close(ShmRegion *region)
 {
-    int saved_errno;
-
     if (region == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    saved_errno = 0;
     if (region->base != NULL && munmap(region->base, region->size) != 0) {
-        saved_errno = errno;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
-    if (region->fd >= 0 && close(region->fd) != 0 && saved_errno == 0) {
-        saved_errno = errno;
+    if (region->fd >= 0 && close(region->fd) != 0) {
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     shm_region_reset(region);
-    if (saved_errno != 0) {
-        errno = saved_errno;
-        return false;
-    }
-
-    return true;
+    return OFFSET_STORE_STATUS_OK;
 }
 
-bool shm_region_unlink(const char *name)
+OffsetStoreStatus shm_region_unlink(const char *name)
 {
     if (name == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    return shm_unlink(name) == 0;
+    if (shm_unlink(name) != 0) {
+        if (errno == ENOENT) {
+            return OFFSET_STORE_STATUS_NOT_FOUND;
+        }
+
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+    return OFFSET_STORE_STATUS_OK;
 }
 
-bool shm_region_lock(ShmRegion *region)
+OffsetStoreStatus shm_region_lock(ShmRegion *region)
 {
     ShmRegionHeader *header;
 
     if (region == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
     header = shm_region_header_mut(region);
     if (header == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
     if (pthread_mutex_lock(&header->mutex) != 0) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
-    return true;
+    return OFFSET_STORE_STATUS_OK;
 }
 
-bool shm_region_unlock(ShmRegion *region)
+OffsetStoreStatus shm_region_unlock(ShmRegion *region)
 {
     ShmRegionHeader *header;
 
     if (region == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
     header = shm_region_header_mut(region);
     if (header == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
     if (pthread_mutex_unlock(&header->mutex) != 0) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
-    return true;
+    return OFFSET_STORE_STATUS_OK;
 }
 
-const ShmRegionHeader *shm_region_header(const ShmRegion *region)
+size_t shm_region_header_size(void)
 {
-    if (region == NULL || region->base == NULL) {
-        return NULL;
-    }
-
-    return (const ShmRegionHeader *) region->base;
+    return sizeof(ShmRegionHeader);
 }
 
-ShmRegionHeader *shm_region_header_mut(ShmRegion *region)
+OffsetStoreStatus shm_region_total_size(const ShmRegion *region, uint64_t *out_total_size)
 {
-    if (region == NULL || region->base == NULL) {
-        return NULL;
+    const ShmRegionHeader *header;
+
+    if (region == NULL || out_total_size == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    return (ShmRegionHeader *) region->base;
+    header = shm_region_header(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    *out_total_size = header->total_size;
+    return OFFSET_STORE_STATUS_OK;
+}
+
+OffsetStoreStatus shm_region_version(const ShmRegion *region, uint32_t *out_version)
+{
+    const ShmRegionHeader *header;
+
+    if (region == NULL || out_version == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = shm_region_header(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    *out_version = header->version;
+    return OFFSET_STORE_STATUS_OK;
 }
 
 void *shm_region_data(const ShmRegion *region)

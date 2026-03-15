@@ -2,7 +2,6 @@
 
 #include "offset_store/allocator.h"
 
-#include <errno.h>
 #include <stdalign.h>
 
 _Static_assert(
@@ -34,7 +33,7 @@ static bool object_store_resolve_header(
     }
 
     /* Object handles must point to the start of a live allocator allocation. */
-    if (!allocator_allocation_span(region, *out_header, &allocation_size)) {
+    if (allocator_allocation_span(region, *out_header, &allocation_size) != OFFSET_STORE_STATUS_OK) {
         return false;
     }
 
@@ -85,18 +84,19 @@ void *object_store_payload(ShmRegion *region, OffsetPtr object)
     return (void *) object_store_payload_const(region, object);
 }
 
-bool object_store_alloc(ShmRegion *region, uint32_t type, size_t payload_size, OffsetPtr *out_object)
+OffsetStoreStatus object_store_alloc(ShmRegion *region, uint32_t type, size_t payload_size, OffsetPtr *out_object)
 {
+    OffsetStoreStatus status;
     void *storage;
     ObjectHeader *header;
 
     if (region == NULL || out_object == NULL || payload_size > UINT32_MAX) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    if (!allocator_alloc(region, sizeof(ObjectHeader) + payload_size, alignof(max_align_t), &storage)) {
-        return false;
+    status = allocator_alloc(region, sizeof(ObjectHeader) + payload_size, alignof(max_align_t), &storage);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
     }
 
     header = (ObjectHeader *) storage;
@@ -106,31 +106,27 @@ bool object_store_alloc(ShmRegion *region, uint32_t type, size_t payload_size, O
     header->reserved = 0;
 
     if (!offset_ptr_try_from_raw(region->base, region->size, header, out_object)) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
-    return true;
+    return OFFSET_STORE_STATUS_OK;
 }
 
-bool object_store_free(ShmRegion *region, OffsetPtr object)
+OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object)
 {
     ObjectHeader *header;
 
     if (region == NULL || offset_ptr_is_null(object)) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
     header = object_store_header_mut(region, object);
     if (header == NULL) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_NOT_FOUND;
     }
 
     if (!object_store_resolve_header(region, object, header->size, (void **) &header)) {
-        errno = EINVAL;
-        return false;
+        return OFFSET_STORE_STATUS_NOT_FOUND;
     }
 
     return allocator_free(region, header);

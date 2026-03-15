@@ -3,7 +3,6 @@
 #include "offset_store/allocator.h"
 
 #include <assert.h>
-#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -26,21 +25,38 @@ static void test_allocator_init_and_validate(void)
 {
     char name[64];
     ShmRegion region;
-    const AllocatorHeader *header;
+    OffsetPtr free_list_head;
+    uint64_t heap_offset;
 
     make_region_name(name, sizeof(name), "alloc-init");
-    assert(!shm_region_unlink(name));
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096));
-    assert(allocator_init(&region));
-    assert(allocator_validate(&region));
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_validate(&region) == OFFSET_STORE_STATUS_OK);
 
-    header = allocator_header(&region);
-    assert(header != NULL);
-    assert(header->free_list_head.offset == header->heap_offset);
+    assert(allocator_heap_offset(&region, &heap_offset) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_free_list_head(&region, &free_list_head) == OFFSET_STORE_STATUS_OK);
+    assert(free_list_head.offset == heap_offset);
 
-    assert(shm_region_close(&region));
-    assert(shm_region_unlink(name));
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+}
+
+static void test_allocator_init_is_one_shot(void)
+{
+    char name[64];
+    ShmRegion region;
+
+    make_region_name(name, sizeof(name), "alloc-one-shot");
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_ALREADY_EXISTS);
+
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
 static void test_allocator_alloc_and_free_round_trip(void)
@@ -51,23 +67,23 @@ static void test_allocator_alloc_and_free_round_trip(void)
     void *reused;
 
     make_region_name(name, sizeof(name), "alloc-free");
-    assert(!shm_region_unlink(name));
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096));
-    assert(allocator_init(&region));
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
 
-    assert(allocator_alloc(&region, 64, 16, &allocation));
+    assert(allocator_alloc(&region, 64, 16, &allocation) == OFFSET_STORE_STATUS_OK);
     memset(allocation, 0x5a, 64);
-    assert(allocator_validate(&region));
+    assert(allocator_validate(&region) == OFFSET_STORE_STATUS_OK);
 
-    assert(allocator_free(&region, allocation));
-    assert(allocator_validate(&region));
+    assert(allocator_free(&region, allocation) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_validate(&region) == OFFSET_STORE_STATUS_OK);
 
-    assert(allocator_alloc(&region, 64, 16, &reused));
+    assert(allocator_alloc(&region, 64, 16, &reused) == OFFSET_STORE_STATUS_OK);
     assert(reused == allocation);
 
-    assert(shm_region_close(&region));
-    assert(shm_region_unlink(name));
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
 static void test_allocator_honors_alignment(void)
@@ -77,15 +93,15 @@ static void test_allocator_honors_alignment(void)
     void *allocation;
 
     make_region_name(name, sizeof(name), "alloc-align");
-    assert(!shm_region_unlink(name));
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096));
-    assert(allocator_init(&region));
-    assert(allocator_alloc(&region, 32, 64, &allocation));
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_alloc(&region, 32, 64, &allocation) == OFFSET_STORE_STATUS_OK);
     assert(((uintptr_t) allocation % 64u) == 0);
 
-    assert(shm_region_close(&region));
-    assert(shm_region_unlink(name));
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
 static void test_allocator_rejects_double_free(void)
@@ -95,17 +111,16 @@ static void test_allocator_rejects_double_free(void)
     void *allocation;
 
     make_region_name(name, sizeof(name), "alloc-double-free");
-    assert(!shm_region_unlink(name));
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096));
-    assert(allocator_init(&region));
-    assert(allocator_alloc(&region, 48, 16, &allocation));
-    assert(allocator_free(&region, allocation));
-    assert(!allocator_free(&region, allocation));
-    assert(errno == EINVAL);
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_alloc(&region, 48, 16, &allocation) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_free(&region, allocation) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_free(&region, allocation) == OFFSET_STORE_STATUS_INVALID_STATE);
 
-    assert(shm_region_close(&region));
-    assert(shm_region_unlink(name));
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
 static void test_allocator_state_is_visible_after_attach(void)
@@ -113,31 +128,37 @@ static void test_allocator_state_is_visible_after_attach(void)
     char name[64];
     ShmRegion creator_region;
     ShmRegion attached_region;
-    const AllocatorHeader *creator_header;
-    const AllocatorHeader *attached_header;
     void *allocation;
+    OffsetPtr creator_free_list_head;
+    OffsetPtr attached_free_list_head;
+    uint64_t creator_heap_offset;
+    uint64_t attached_heap_offset;
+    uint64_t creator_heap_size;
+    uint64_t attached_heap_size;
 
     make_region_name(name, sizeof(name), "alloc-attach");
-    assert(!shm_region_unlink(name));
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&creator_region, name, 4096));
-    assert(allocator_init(&creator_region));
-    assert(allocator_alloc(&creator_region, 80, 16, &allocation));
+    assert(shm_region_create(&creator_region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&creator_region) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_alloc(&creator_region, 80, 16, &allocation) == OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_open(&attached_region, name));
-    assert(allocator_validate(&attached_region));
+    assert(shm_region_open(&attached_region, name) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_validate(&attached_region) == OFFSET_STORE_STATUS_OK);
 
-    creator_header = allocator_header(&creator_region);
-    attached_header = allocator_header(&attached_region);
-    assert(creator_header != NULL);
-    assert(attached_header != NULL);
-    assert(creator_header->heap_offset == attached_header->heap_offset);
-    assert(creator_header->heap_size == attached_header->heap_size);
-    assert(creator_header->free_list_head.offset == attached_header->free_list_head.offset);
+    assert(allocator_heap_offset(&creator_region, &creator_heap_offset) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_heap_offset(&attached_region, &attached_heap_offset) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_heap_size(&creator_region, &creator_heap_size) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_heap_size(&attached_region, &attached_heap_size) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_free_list_head(&creator_region, &creator_free_list_head) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_free_list_head(&attached_region, &attached_free_list_head) == OFFSET_STORE_STATUS_OK);
+    assert(creator_heap_offset == attached_heap_offset);
+    assert(creator_heap_size == attached_heap_size);
+    assert(creator_free_list_head.offset == attached_free_list_head.offset);
 
-    assert(shm_region_close(&attached_region));
-    assert(shm_region_close(&creator_region));
-    assert(shm_region_unlink(name));
+    assert(shm_region_close(&attached_region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_close(&creator_region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
 static void test_allocator_rejects_invalid_alignment(void)
@@ -147,20 +168,20 @@ static void test_allocator_rejects_invalid_alignment(void)
     void *allocation;
 
     make_region_name(name, sizeof(name), "alloc-align-invalid");
-    assert(!shm_region_unlink(name));
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096));
-    assert(allocator_init(&region));
-    assert(!allocator_alloc(&region, 32, 24, &allocation));
-    assert(errno == EINVAL);
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_alloc(&region, 32, 24, &allocation) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
 
-    assert(shm_region_close(&region));
-    assert(shm_region_unlink(name));
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
 int main(void)
 {
     test_allocator_init_and_validate();
+    test_allocator_init_is_one_shot();
     test_allocator_alloc_and_free_round_trip();
     test_allocator_honors_alignment();
     test_allocator_rejects_double_free();

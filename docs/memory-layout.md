@@ -23,7 +23,8 @@ mapping. The remainder of the region is the allocator-managed heap.
 
 ## Region Header
 
-`ShmRegionHeader` is stored at offset `0` from the region base:
+The region header is stored at offset `0` from the region base. Its typedef is
+kept private to `src/shm_region.c`, but the current byte layout is:
 
 ```c
 typedef struct {
@@ -58,18 +59,9 @@ Failure notes:
 
 ## Allocator Header
 
-`AllocatorHeader` is stored immediately after `ShmRegionHeader`:
+The allocator stores an internal header immediately after `ShmRegionHeader`:
 
-```c
-typedef struct {
-    uint64_t magic;
-    uint32_t version;
-    uint32_t reserved;
-    uint64_t heap_offset;
-    uint64_t heap_size;
-    OffsetPtr free_list_head;
-} AllocatorHeader;
-```
+Its layout currently contains:
 
 Fields:
 
@@ -109,16 +101,7 @@ large enough to form another valid block.
 
 ### Block Header
 
-Each block starts with:
-
-```c
-typedef struct {
-    uint64_t size;
-    OffsetPtr next_free;
-    uint32_t flags;
-    uint32_t payload_offset;
-} AllocatorBlockHeader;
-```
+Each block starts with an internal block header containing:
 
 Fields:
 
@@ -190,6 +173,11 @@ typedef struct {
 
 This descriptor tracks the local file descriptor and mapping address for one
 process. It must never be embedded in shared-memory-resident structures.
+
+The public `shm_region` API now exposes region metadata through query helpers
+instead of returning a typed pointer to the shared header. That keeps shared
+layout details documented here without making them part of the stable public C
+surface.
 
 ## Current Locking Scope
 

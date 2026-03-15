@@ -24,6 +24,14 @@ documentation, initial repository scaffolding, and the first implemented modules
 both the intended architecture and the concrete APIs that now exist so
 implementation work can stay aligned with a consistent model.
 
+The initial `v0.1.0` scope is implemented. The next planned iteration, `v0.1.1`, is
+focused on API polish: public status/error reporting, header cleanup, lifecycle
+ergonomics, and clearer concurrency contracts.
+
+The current `v0.1.1` work now includes a higher-level lifecycle wrapper:
+`OffsetStore`, with `offset_store_bootstrap(...)`, `offset_store_open_existing(...)`,
+and `offset_store_close(...)`.
+
 ## Design Goals
 
 The project is designed around these goals:
@@ -102,9 +110,10 @@ Current implemented `shm_region` responsibilities:
 
 - create a new shared memory object and size it with `ftruncate`
 - map a region with `mmap`
-- store and validate a fixed region header at the start of the mapping
+- store and validate a fixed private region header at the start of the mapping
 - initialize and expose a process-shared mutex stored in the region header
-- expose the header pointer, data start, and usable payload size
+- expose region metadata through narrow query helpers plus data start and usable
+  payload size
 - close mappings and unlink shared memory objects
 
 ## Offset Pointer Model
@@ -204,6 +213,8 @@ Current implemented allocator behavior:
   block offset rather than a raw pointer
 - `allocator_validate` walks the physical heap and the free list to catch basic
   structural corruption
+- allocator metadata layout remains internal to `src/allocator.c`; the public API
+  now exposes small query helpers instead of the raw allocator header struct
 
 ## Object Layout
 
@@ -268,6 +279,23 @@ Recommended debugging workflow:
 - attach `gdb` to the example binaries for step-by-step shared-memory inspection
 - run the test or example binaries under `valgrind` when investigating memory misuse
 - inspect `/dev/shm` to confirm POSIX shared-memory objects are being created and removed
+
+Current public error-reporting direction:
+
+- mutating public APIs now return `OffsetStoreStatus`
+- `offset_store_status_string(...)` converts those codes into readable text
+- pointer-returning accessors such as object/header resolution still use `NULL` on failure
+- the remaining API-polish work will extend this contract more consistently across the surface
+
+Current lifecycle direction:
+
+- prefer `OffsetStore` for common create/open/close flows
+- `offset_store_bootstrap(...)` performs region creation plus allocator initialization
+- `offset_store_open_existing(...)` performs region attach plus allocator validation
+- initialization is currently strict one-shot rather than idempotent
+- duplicate bootstrap/create attempts fail with `OFFSET_STORE_STATUS_ALREADY_EXISTS`
+- duplicate allocator initialization fails with `OFFSET_STORE_STATUS_ALREADY_EXISTS`
+- lower-level `shm_region` and `allocator` APIs remain available when finer-grained control is needed
 
 Potential future header fields:
 
@@ -615,18 +643,24 @@ Present top-level files and directories:
 
 Implemented files:
 
+- `include/offset_store/offset_store.h`
 - `include/offset_store/offset_ptr.h`
 - `include/offset_store/allocator.h`
 - `include/offset_store/object_store.h`
 - `include/offset_store/shm_region.h`
+- `include/offset_store/store.h`
 - `src/allocator.c`
+- `src/offset_store.c`
 - `src/object_store.c`
 - `src/offset_ptr.c`
 - `src/shm_region.c`
+- `src/store.c`
 - `tests/test_allocator.c`
+- `tests/test_offset_store.c`
 - `tests/test_object_store.c`
 - `tests/test_offset_ptr.c`
 - `tests/test_shm_region.c`
+- `tests/test_store.c`
 - `docs/memory-layout.md`
 - `examples/consumer.c`
 - `examples/producer.c`
@@ -648,8 +682,10 @@ The repository now includes a first unit test:
 
 - `tests/test_offset_ptr.c`
 - `tests/test_allocator.c`
+- `tests/test_offset_store.c`
 - `tests/test_object_store.c`
 - `tests/test_shm_region.c`
+- `tests/test_store.c`
 
 The current `Makefile` builds all test files under `tests/` and links them against the
 current sources under `src/`. Running `make test` executes every produced test binary.
