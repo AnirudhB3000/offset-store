@@ -246,10 +246,11 @@ When modifying the code:
 7. After every change made, update the relevant README documentation before considering the work complete
 8. All implemented logic must have corresponding tests
 9. All code files must have sufficient inline comments explaining logic
-10. Update `TODO.md` as work progresses so completed and remaining tasks stay accurate
-11. Do not add future-version tasks, roadmap items, or scope changes unless explicitly requested by the user
-12. Any user updates made without explicit instruction to modify or remove them must be respected and not reversed
-13. If the user removes content from any file, treat that removal as intentional and do not restore or recreate the removed content unless explicitly asked
+10. All code blocks, including functions, structs, enums, typedefs, and macros, must have sufficient inline documentation using Doxygen-style comments
+11. Update `TODO.md` as work progresses so completed and remaining tasks stay accurate
+12. Do not add future-version tasks, roadmap items, or scope changes unless explicitly requested by the user
+13. Any user updates made without explicit instruction to modify or remove them must be respected and not reversed
+14. If the user removes content from any file, treat that removal as intentional and do not restore or recreate the removed content unless explicitly asked
 
 If new structures are introduced, document:
 

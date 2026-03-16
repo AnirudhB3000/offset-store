@@ -18,6 +18,15 @@ well-documented building blocks for:
 - stable object layout rules
 - experimentation with crash tolerance and recovery
 
+For a source-level walkthrough of the implemented modules, especially the
+allocator and object-store internals, see
+[`src/README.md`](/home/aniru/offset-store/src/README.md).
+
+Code documentation now follows a Doxygen-style convention for public headers,
+implementation helpers, tests, and examples. A small set of files currently
+owned by `root` may still need the same comment pass before the repository is
+fully uniform.
+
 At the time of writing, the repository contains project instructions, top-level
 documentation, initial repository scaffolding, and the first implemented modules:
 `offset_ptr`, `shm_region`, `allocator`, and `object_store`. This README documents

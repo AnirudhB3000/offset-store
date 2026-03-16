@@ -13,19 +13,30 @@
 
 static const uint64_t OFFSET_STORE_REGION_MAGIC = UINT64_C(0x4f464653544f5245);
 
-/*
- * The shared header lives at offset zero in every mapping. Keeping it private
- * prevents callers from depending on binary layout details that should remain
- * an implementation concern of the region module.
+/**
+ * @brief Private shared-memory header stored at offset zero in every region.
+ *
+ * Keeping this typedef private prevents callers from depending on binary layout
+ * details that should remain an implementation concern of the region module.
  */
 typedef struct {
+    /** Magic value identifying an offset-store region. */
     uint64_t magic;
+    /** Region layout version expected by this binary. */
     uint32_t version;
+    /** Reserved field for future expansion. */
     uint32_t reserved;
+    /** Total mapped size in bytes. */
     uint64_t total_size;
+    /** Process-shared mutex protecting coarse-grained shared mutation. */
     pthread_mutex_t mutex;
 } ShmRegionHeader;
 
+/**
+ * @brief Resets a process-local region descriptor to its empty state.
+ *
+ * @param region Region descriptor to reset.
+ */
 static void shm_region_reset(ShmRegion *region)
 {
     if (region == NULL) {
@@ -38,11 +49,28 @@ static void shm_region_reset(ShmRegion *region)
     region->creator = false;
 }
 
+/**
+ * @brief Returns whether a region is large enough to hold the private header.
+ *
+ * @param size Candidate region size in bytes.
+ * @return true if the size is valid.
+ * @return false otherwise.
+ */
 static bool shm_region_is_size_valid(size_t size)
 {
     return size >= sizeof(ShmRegionHeader);
 }
 
+/**
+ * @brief Maps an already-open file descriptor as shared memory.
+ *
+ * @param region Region descriptor to populate.
+ * @param fd Open shared-memory file descriptor.
+ * @param size Mapping size in bytes.
+ * @param creator Whether the caller created the region.
+ * @return true if mapping succeeds.
+ * @return false otherwise.
+ */
 static bool shm_region_map_fd(ShmRegion *region, int fd, size_t size, bool creator)
 {
     void *mapping;
@@ -63,6 +91,13 @@ static bool shm_region_map_fd(ShmRegion *region, int fd, size_t size, bool creat
     return true;
 }
 
+/**
+ * @brief Validates the private shared header of an attached region.
+ *
+ * @param region Region descriptor to inspect.
+ * @return true if the header is valid.
+ * @return false otherwise.
+ */
 static bool shm_region_validate_header(const ShmRegion *region)
 {
     const ShmRegionHeader *header;
@@ -87,6 +122,12 @@ static bool shm_region_validate_header(const ShmRegion *region)
     return true;
 }
 
+/**
+ * @brief Returns a const view of the private shared region header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Const shared header pointer, or `NULL` on failure.
+ */
 static const ShmRegionHeader *shm_region_header(const ShmRegion *region)
 {
     if (region == NULL || region->base == NULL) {
@@ -96,6 +137,12 @@ static const ShmRegionHeader *shm_region_header(const ShmRegion *region)
     return (const ShmRegionHeader *) region->base;
 }
 
+/**
+ * @brief Returns a mutable view of the private shared region header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Mutable shared header pointer, or `NULL` on failure.
+ */
 static ShmRegionHeader *shm_region_header_mut(ShmRegion *region)
 {
     if (region == NULL || region->base == NULL) {
@@ -105,6 +152,12 @@ static ShmRegionHeader *shm_region_header_mut(ShmRegion *region)
     return (ShmRegionHeader *) region->base;
 }
 
+/**
+ * @brief Initializes the process-shared mutex stored in the region header.
+ *
+ * @param header Shared region header to initialize.
+ * @return Status code describing success or failure.
+ */
 static OffsetStoreStatus shm_region_init_mutex(ShmRegionHeader *header)
 {
     pthread_mutexattr_t attr;
@@ -131,6 +184,14 @@ static OffsetStoreStatus shm_region_init_mutex(ShmRegionHeader *header)
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Creates and initializes a new shared-memory region.
+ *
+ * @param out_region Region descriptor to initialize.
+ * @param name POSIX shared-memory object name.
+ * @param size Requested mapping size in bytes.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus shm_region_create(ShmRegion *out_region, const char *name, size_t size)
 {
     int fd;
@@ -182,6 +243,13 @@ OffsetStoreStatus shm_region_create(ShmRegion *out_region, const char *name, siz
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Opens and validates an existing shared-memory region.
+ *
+ * @param out_region Region descriptor to initialize.
+ * @param name POSIX shared-memory object name.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus shm_region_open(ShmRegion *out_region, const char *name)
 {
     int fd;
@@ -220,6 +288,12 @@ OffsetStoreStatus shm_region_open(ShmRegion *out_region, const char *name)
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Unmaps and closes a process-local shared-memory mapping.
+ *
+ * @param region Region descriptor to close.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus shm_region_close(ShmRegion *region)
 {
     if (region == NULL) {
@@ -238,6 +312,12 @@ OffsetStoreStatus shm_region_close(ShmRegion *region)
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Removes a shared-memory object from the system namespace.
+ *
+ * @param name POSIX shared-memory object name.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus shm_region_unlink(const char *name)
 {
     if (name == NULL) {
@@ -255,6 +335,12 @@ OffsetStoreStatus shm_region_unlink(const char *name)
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Acquires the region's shared mutex.
+ *
+ * @param region Region descriptor whose mutex should be locked.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus shm_region_lock(ShmRegion *region)
 {
     ShmRegionHeader *header;
@@ -275,6 +361,12 @@ OffsetStoreStatus shm_region_lock(ShmRegion *region)
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Releases the region's shared mutex.
+ *
+ * @param region Region descriptor whose mutex should be unlocked.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus shm_region_unlock(ShmRegion *region)
 {
     ShmRegionHeader *header;
@@ -295,11 +387,23 @@ OffsetStoreStatus shm_region_unlock(ShmRegion *region)
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Returns the size of the private region header.
+ *
+ * @return Header size in bytes.
+ */
 size_t shm_region_header_size(void)
 {
     return sizeof(ShmRegionHeader);
 }
 
+/**
+ * @brief Returns the total size recorded in the shared region header.
+ *
+ * @param region Region descriptor to inspect.
+ * @param[out] out_total_size Total size in bytes on success.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus shm_region_total_size(const ShmRegion *region, uint64_t *out_total_size)
 {
     const ShmRegionHeader *header;
@@ -317,6 +421,13 @@ OffsetStoreStatus shm_region_total_size(const ShmRegion *region, uint64_t *out_t
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Returns the region layout version recorded in shared metadata.
+ *
+ * @param region Region descriptor to inspect.
+ * @param[out] out_version Version value on success.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus shm_region_version(const ShmRegion *region, uint32_t *out_version)
 {
     const ShmRegionHeader *header;
@@ -334,6 +445,12 @@ OffsetStoreStatus shm_region_version(const ShmRegion *region, uint32_t *out_vers
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Returns the first usable byte after the private region header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Pointer to usable region data, or `NULL` on failure.
+ */
 void *shm_region_data(const ShmRegion *region)
 {
     if (region == NULL || region->base == NULL || region->size < sizeof(ShmRegionHeader)) {
@@ -344,6 +461,12 @@ void *shm_region_data(const ShmRegion *region)
     return (void *) ((unsigned char *) region->base + sizeof(ShmRegionHeader));
 }
 
+/**
+ * @brief Returns the number of usable bytes after the private region header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Usable byte count, or zero on failure.
+ */
 size_t shm_region_usable_size(const ShmRegion *region)
 {
     if (region == NULL || region->size < sizeof(ShmRegionHeader)) {

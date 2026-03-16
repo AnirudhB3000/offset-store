@@ -13,6 +13,13 @@ enum {
     EXAMPLE_OBJECT_TYPE = 1
 };
 
+/**
+ * @brief Creates a store, writes one object payload, and prints its offset.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return Zero on success, non-zero on failure.
+ */
 int main(int argc, char **argv)
 {
     const char *region_name;

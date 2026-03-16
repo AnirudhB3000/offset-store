@@ -8,6 +8,13 @@
 #include <string.h>
 #include <unistd.h>
 
+/**
+ * @brief Builds a unique shared-memory name for one allocator test.
+ *
+ * @param buffer Destination buffer.
+ * @param buffer_size Destination buffer size in bytes.
+ * @param suffix Per-test suffix.
+ */
 static void make_region_name(char *buffer, size_t buffer_size, const char *suffix)
 {
     /*
@@ -21,6 +28,9 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     assert((size_t) written < buffer_size);
 }
 
+/**
+ * @brief Verifies allocator initialization and validation on a fresh region.
+ */
 static void test_allocator_init_and_validate(void)
 {
     char name[64];
@@ -43,6 +53,9 @@ static void test_allocator_init_and_validate(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that allocator initialization is strict one-shot behavior.
+ */
 static void test_allocator_init_is_one_shot(void)
 {
     char name[64];
@@ -59,6 +72,9 @@ static void test_allocator_init_is_one_shot(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies allocation, free, and immediate reuse of storage.
+ */
 static void test_allocator_alloc_and_free_round_trip(void)
 {
     char name[64];
@@ -86,6 +102,9 @@ static void test_allocator_alloc_and_free_round_trip(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that allocations honor the requested alignment.
+ */
 static void test_allocator_honors_alignment(void)
 {
     char name[64];
@@ -104,6 +123,9 @@ static void test_allocator_honors_alignment(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that freeing the same allocation twice is rejected.
+ */
 static void test_allocator_rejects_double_free(void)
 {
     char name[64];
@@ -123,6 +145,9 @@ static void test_allocator_rejects_double_free(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies allocator metadata is consistent across multiple attaches.
+ */
 static void test_allocator_state_is_visible_after_attach(void)
 {
     char name[64];
@@ -161,6 +186,9 @@ static void test_allocator_state_is_visible_after_attach(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies allocator rejection of non-power-of-two alignment requests.
+ */
 static void test_allocator_rejects_invalid_alignment(void)
 {
     char name[64];
@@ -178,6 +206,11 @@ static void test_allocator_rejects_invalid_alignment(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Runs the allocator unit tests.
+ *
+ * @return Zero on success.
+ */
 int main(void)
 {
     test_allocator_init_and_validate();

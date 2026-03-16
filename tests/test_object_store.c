@@ -11,6 +11,13 @@
 #include <string.h>
 #include <unistd.h>
 
+/**
+ * @brief Builds a unique shared-memory name for one object-store test.
+ *
+ * @param buffer Destination buffer.
+ * @param buffer_size Destination buffer size in bytes.
+ * @param suffix Per-test suffix.
+ */
 static void make_region_name(char *buffer, size_t buffer_size, const char *suffix)
 {
     /*
@@ -24,12 +31,18 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     assert((size_t) written < buffer_size);
 }
 
+/**
+ * @brief Verifies the fixed object header size and alignment contract.
+ */
 static void test_object_header_layout(void)
 {
     assert(sizeof(ObjectHeader) == 16);
     assert((sizeof(ObjectHeader) % alignof(max_align_t)) == 0);
 }
 
+/**
+ * @brief Verifies object allocation and payload resolution.
+ */
 static void test_object_alloc_and_resolve(void)
 {
     char name[64];
@@ -60,6 +73,9 @@ static void test_object_alloc_and_resolve(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies object offsets remain valid across separate attaches.
+ */
 static void test_object_offset_is_stable_across_attach(void)
 {
     char name[64];
@@ -92,6 +108,9 @@ static void test_object_offset_is_stable_across_attach(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that freeing an object releases its underlying storage.
+ */
 static void test_object_free_releases_storage(void)
 {
     char name[64];
@@ -113,6 +132,9 @@ static void test_object_free_releases_storage(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that arbitrary invalid offsets are rejected as objects.
+ */
 static void test_object_rejects_invalid_offset(void)
 {
     char name[64];
@@ -134,6 +156,11 @@ static void test_object_rejects_invalid_offset(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Runs the object-store unit tests.
+ *
+ * @return Zero on success.
+ */
 int main(void)
 {
     test_object_header_layout();

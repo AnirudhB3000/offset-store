@@ -5,20 +5,46 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Shared-memory references are stored as offsets from the region base. */
+/**
+ * @brief Address-independent shared-memory reference.
+ *
+ * Shared-memory references are stored as offsets from the region base so the
+ * same on-disk or in-memory layout can be resolved by processes with different
+ * virtual addresses.
+ */
 typedef struct {
+    /** Offset from the shared-memory base address. Zero is the null sentinel. */
     uint64_t offset;
 } OffsetPtr;
 
-/* Returns the canonical null offset pointer. */
+/**
+ * @brief Returns the canonical null offset pointer.
+ *
+ * @return Offset pointer whose offset is zero.
+ */
 OffsetPtr offset_ptr_null(void);
 
-/* Returns true when the offset pointer is the null sentinel. */
+/**
+ * @brief Returns whether an offset pointer is the null sentinel.
+ *
+ * @param ptr Offset pointer to inspect.
+ * @return true if @p ptr is null.
+ * @return false otherwise.
+ */
 bool offset_ptr_is_null(OffsetPtr ptr);
 
-/*
- * Converts a process-local pointer into a shared offset.
- * The conversion succeeds only when ptr lies inside [base, base + region_size).
+/**
+ * @brief Converts a process-local pointer into a shared offset.
+ *
+ * The conversion succeeds only when @p ptr lies within the mapped region and
+ * does not resolve to offset zero.
+ *
+ * @param base Base address of the mapped region.
+ * @param region_size Size of the mapped region in bytes.
+ * @param ptr Process-local pointer to convert.
+ * @param[out] out_ptr Converted offset pointer on success.
+ * @return true if conversion succeeds.
+ * @return false if arguments are invalid or @p ptr lies outside the region.
  */
 bool offset_ptr_try_from_raw(
     const void *base,
@@ -27,10 +53,16 @@ bool offset_ptr_try_from_raw(
     OffsetPtr *out_ptr
 );
 
-/*
- * Resolves an offset back into a process-local pointer.
- * span is the number of bytes the caller intends to access from the resolved
- * address and is checked against the region bounds.
+/**
+ * @brief Resolves an offset back into a process-local pointer.
+ *
+ * @param base Base address of the mapped region.
+ * @param region_size Size of the mapped region in bytes.
+ * @param ptr Offset pointer to resolve.
+ * @param span Number of bytes the caller intends to access from the resolved address.
+ * @param[out] out_raw Resolved process-local pointer on success.
+ * @return true if resolution succeeds and the requested span stays in bounds.
+ * @return false otherwise.
  */
 bool offset_ptr_try_resolve(
     const void *base,
@@ -40,7 +72,17 @@ bool offset_ptr_try_resolve(
     void **out_raw
 );
 
-/* Const-qualified version of offset_ptr_try_resolve for read-only callers. */
+/**
+ * @brief Resolves an offset for read-only callers.
+ *
+ * @param base Base address of the mapped region.
+ * @param region_size Size of the mapped region in bytes.
+ * @param ptr Offset pointer to resolve.
+ * @param span Number of bytes the caller intends to access from the resolved address.
+ * @param[out] out_raw Resolved const process-local pointer on success.
+ * @return true if resolution succeeds and the requested span stays in bounds.
+ * @return false otherwise.
+ */
 bool offset_ptr_try_resolve_const(
     const void *base,
     size_t region_size,
@@ -49,7 +91,15 @@ bool offset_ptr_try_resolve_const(
     const void **out_raw
 );
 
-/* Returns true when [ptr.offset, ptr.offset + span) lies within the region. */
+/**
+ * @brief Returns whether an offset span lies entirely within the region.
+ *
+ * @param region_size Size of the mapped region in bytes.
+ * @param ptr Offset pointer describing the start of the span.
+ * @param span Requested span size in bytes.
+ * @return true if the span is valid and in bounds.
+ * @return false otherwise.
+ */
 bool offset_ptr_is_in_bounds(size_t region_size, OffsetPtr ptr, size_t span);
 
 #endif

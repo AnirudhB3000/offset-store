@@ -3,6 +3,9 @@
 #include <assert.h>
 #include <stddef.h>
 
+/**
+ * @brief Verifies that every public status code has a readable string.
+ */
 static void test_status_strings(void)
 {
     assert(offset_store_status_string(OFFSET_STORE_STATUS_OK) != NULL);
@@ -14,6 +17,11 @@ static void test_status_strings(void)
     assert(offset_store_status_string(OFFSET_STORE_STATUS_SYSTEM_ERROR) != NULL);
 }
 
+/**
+ * @brief Runs the status-string unit tests.
+ *
+ * @return Zero on success.
+ */
 int main(void)
 {
     test_status_strings();

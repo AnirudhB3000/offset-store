@@ -3,28 +3,53 @@
 #include <stdint.h>
 #include <stdalign.h>
 
+/**
+ * @brief Private allocator metadata stored in shared memory.
+ */
 typedef struct {
+    /** Magic value identifying initialized allocator metadata. */
     uint64_t magic;
+    /** Allocator layout version. */
     uint32_t version;
+    /** Reserved field for future expansion. */
     uint32_t reserved;
+    /** Offset from the region base to the first heap block. */
     uint64_t heap_offset;
+    /** Total heap size in bytes. */
     uint64_t heap_size;
+    /** Free-list head stored as an offset pointer. */
     OffsetPtr free_list_head;
 } AllocatorHeader;
 
+/**
+ * @brief Private heap block header stored at the start of every block.
+ */
 typedef struct {
+    /** Total block size, including header and payload area. */
     uint64_t size;
+    /** Free-list link used only while the block is free. */
     OffsetPtr next_free;
+    /** Block flags such as `OFFSET_STORE_ALLOCATOR_BLOCK_FREE`. */
     uint32_t flags;
+    /** Byte offset from the block start to the live payload. */
     uint32_t payload_offset;
 } AllocatorBlockHeader;
 
+/**
+ * @brief In-band prefix stored immediately before every live allocation payload.
+ */
 typedef struct {
+    /** Offset of the owning heap block from the region base. */
     uint64_t block_offset;
 } AllocationPrefix;
 
 static const uint64_t OFFSET_STORE_ALLOCATOR_MAGIC = UINT64_C(0x4f464653414c4c43);
 
+/**
+ * @brief Returns the offset where private allocator metadata begins.
+ *
+ * @return Byte offset from the region base.
+ */
 static size_t allocator_metadata_offset(void)
 {
     /*
@@ -35,6 +60,15 @@ static size_t allocator_metadata_offset(void)
     return shm_region_header_size();
 }
 
+/**
+ * @brief Rounds a value up to the requested power-of-two alignment.
+ *
+ * @param value Input value to align.
+ * @param alignment Requested alignment in bytes.
+ * @param[out] out_value Aligned value on success.
+ * @return true if alignment succeeds without overflow.
+ * @return false otherwise.
+ */
 static bool allocator_align_up(size_t value, size_t alignment, size_t *out_value)
 {
     size_t aligned;
@@ -52,6 +86,11 @@ static bool allocator_align_up(size_t value, size_t alignment, size_t *out_value
     return true;
 }
 
+/**
+ * @brief Returns the minimum size required for a valid heap block.
+ *
+ * @return Minimum block size in bytes.
+ */
 static size_t allocator_min_block_size(void)
 {
     size_t min_block_size;
@@ -64,6 +103,15 @@ static size_t allocator_min_block_size(void)
     return min_block_size;
 }
 
+/**
+ * @brief Computes the aligned heap offset and size for a region.
+ *
+ * @param region Region descriptor to inspect.
+ * @param[out] out_heap_offset Heap start offset on success.
+ * @param[out] out_heap_size Heap size on success.
+ * @return true if the region can host allocator metadata and heap storage.
+ * @return false otherwise.
+ */
 static bool allocator_region_offsets(const ShmRegion *region, size_t *out_heap_offset, size_t *out_heap_size)
 {
     size_t heap_start;
@@ -91,6 +139,12 @@ static bool allocator_region_offsets(const ShmRegion *region, size_t *out_heap_o
     return true;
 }
 
+/**
+ * @brief Returns a mutable pointer to the private allocator header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Mutable allocator header pointer, or `NULL` on failure.
+ */
 static AllocatorHeader *allocator_header_mut(ShmRegion *region)
 {
     if (region == NULL || region->base == NULL || region->size < allocator_metadata_offset() + sizeof(AllocatorHeader)) {
@@ -100,6 +154,12 @@ static AllocatorHeader *allocator_header_mut(ShmRegion *region)
     return (AllocatorHeader *) ((unsigned char *) region->base + allocator_metadata_offset());
 }
 
+/**
+ * @brief Returns a const pointer to the private allocator header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Const allocator header pointer, or `NULL` on failure.
+ */
 static const AllocatorHeader *allocator_header(const ShmRegion *region)
 {
     if (region == NULL || region->base == NULL || region->size < allocator_metadata_offset() + sizeof(AllocatorHeader)) {
@@ -109,8 +169,23 @@ static const AllocatorHeader *allocator_header(const ShmRegion *region)
     return (const AllocatorHeader *) ((const unsigned char *) region->base + allocator_metadata_offset());
 }
 
+/**
+ * @brief Returns whether the private allocator header is structurally valid.
+ *
+ * @param region Region descriptor to inspect.
+ * @param header Candidate allocator header.
+ * @return true if the header is valid.
+ * @return false otherwise.
+ */
 static bool allocator_header_valid(const ShmRegion *region, const AllocatorHeader *header);
 
+/**
+ * @brief Returns the heap start offset recorded in allocator metadata.
+ *
+ * @param region Region descriptor to inspect.
+ * @param[out] out_heap_offset Heap start offset on success.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus allocator_heap_offset(const ShmRegion *region, uint64_t *out_heap_offset)
 {
     const AllocatorHeader *header;
@@ -128,6 +203,13 @@ OffsetStoreStatus allocator_heap_offset(const ShmRegion *region, uint64_t *out_h
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Returns the heap size recorded in allocator metadata.
+ *
+ * @param region Region descriptor to inspect.
+ * @param[out] out_heap_size Heap size on success.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus allocator_heap_size(const ShmRegion *region, uint64_t *out_heap_size)
 {
     const AllocatorHeader *header;
@@ -145,6 +227,13 @@ OffsetStoreStatus allocator_heap_size(const ShmRegion *region, uint64_t *out_hea
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Returns the current free-list head recorded in allocator metadata.
+ *
+ * @param region Region descriptor to inspect.
+ * @param[out] out_head Free-list head on success.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus allocator_free_list_head(const ShmRegion *region, OffsetPtr *out_head)
 {
     const AllocatorHeader *header;
@@ -187,6 +276,15 @@ static bool allocator_header_valid(const ShmRegion *region, const AllocatorHeade
     return true;
 }
 
+/**
+ * @brief Resolves a heap block offset to a mutable block header pointer.
+ *
+ * @param region Region whose mapping contains the block.
+ * @param block_offset Offset of the block to resolve.
+ * @param[out] out_block Resolved block pointer on success.
+ * @return true if resolution succeeds.
+ * @return false otherwise.
+ */
 static bool allocator_block_from_offset(
     const ShmRegion *region,
     OffsetPtr block_offset,
@@ -207,6 +305,14 @@ static bool allocator_block_from_offset(
     return true;
 }
 
+/**
+ * @brief Returns whether a block offset lies within the allocator heap range.
+ *
+ * @param header Allocator header describing the heap bounds.
+ * @param block_offset Offset to inspect.
+ * @return true if the offset lies within the heap.
+ * @return false otherwise.
+ */
 static bool allocator_block_is_in_heap(const AllocatorHeader *header, OffsetPtr block_offset)
 {
     if (header == NULL || offset_ptr_is_null(block_offset)) {
@@ -224,6 +330,14 @@ static bool allocator_block_is_in_heap(const AllocatorHeader *header, OffsetPtr 
     return true;
 }
 
+/**
+ * @brief Returns the usable span of a live allocation.
+ *
+ * @param region Region whose allocator owns the allocation.
+ * @param ptr Process-local payload pointer.
+ * @param[out] out_size Allocation span on success.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus allocator_allocation_span(const ShmRegion *region, const void *ptr, size_t *out_size)
 {
     const AllocatorHeader *header;
@@ -263,6 +377,12 @@ OffsetStoreStatus allocator_allocation_span(const ShmRegion *region, const void 
     return OFFSET_STORE_STATUS_NOT_FOUND;
 }
 
+/**
+ * @brief Initializes allocator metadata and seeds the initial free block.
+ *
+ * @param region Region whose allocator state should be initialized.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus allocator_init(ShmRegion *region)
 {
     AllocatorHeader *header;
@@ -322,6 +442,12 @@ OffsetStoreStatus allocator_init(ShmRegion *region)
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Validates physical heap structure and free-list integrity.
+ *
+ * @param region Region whose allocator state should be checked.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus allocator_validate(const ShmRegion *region)
 {
     const AllocatorHeader *header;
@@ -384,6 +510,15 @@ OffsetStoreStatus allocator_validate(const ShmRegion *region)
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Allocates a block from the shared heap.
+ *
+ * @param region Region whose allocator should satisfy the request.
+ * @param size Requested payload size in bytes.
+ * @param alignment Requested payload alignment in bytes.
+ * @param[out] out_ptr Process-local payload pointer on success.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignment, void **out_ptr)
 {
     AllocatorHeader *header;
@@ -486,6 +621,13 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
     return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
 }
 
+/**
+ * @brief Frees a payload previously allocated from the shared heap.
+ *
+ * @param region Region whose allocator owns the allocation.
+ * @param ptr Process-local payload pointer to free.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr)
 {
     AllocatorHeader *header;

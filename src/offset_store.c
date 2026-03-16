@@ -1,5 +1,11 @@
 #include "offset_store/offset_store.h"
 
+/**
+ * @brief Returns a stable human-readable label for a public status code.
+ *
+ * @param status Status code to stringify.
+ * @return Static string describing the supplied status.
+ */
 const char *offset_store_status_string(OffsetStoreStatus status)
 {
     switch (status) {

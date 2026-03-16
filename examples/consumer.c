@@ -7,6 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/**
+ * @brief Opens a store and resolves the object offset printed by the producer.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return Zero on success, non-zero on failure.
+ */
 int main(int argc, char **argv)
 {
     const char *region_name;

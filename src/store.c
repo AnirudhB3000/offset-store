@@ -1,5 +1,10 @@
 #include "offset_store/store.h"
 
+/**
+ * @brief Resets a process-local store wrapper to its empty state.
+ *
+ * @param store Store descriptor to reset.
+ */
 static void offset_store_reset(OffsetStore *store)
 {
     if (store == NULL) {
@@ -12,6 +17,14 @@ static void offset_store_reset(OffsetStore *store)
     store->region.creator = false;
 }
 
+/**
+ * @brief Creates a new shared-memory store and initializes its allocator.
+ *
+ * @param store Store descriptor to initialize.
+ * @param name POSIX shared-memory object name.
+ * @param size Requested region size in bytes.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus offset_store_bootstrap(OffsetStore *store, const char *name, size_t size)
 {
     OffsetStoreStatus status;
@@ -37,6 +50,13 @@ OffsetStoreStatus offset_store_bootstrap(OffsetStore *store, const char *name, s
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Opens an existing store and validates allocator state.
+ *
+ * @param store Store descriptor to initialize.
+ * @param name POSIX shared-memory object name.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus offset_store_open_existing(OffsetStore *store, const char *name)
 {
     OffsetStoreStatus status;
@@ -61,6 +81,12 @@ OffsetStoreStatus offset_store_open_existing(OffsetStore *store, const char *nam
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Closes a process-local store wrapper.
+ *
+ * @param store Store descriptor to close.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus offset_store_close(OffsetStore *store)
 {
     if (store == NULL) {

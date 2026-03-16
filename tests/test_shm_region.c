@@ -11,6 +11,13 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/**
+ * @brief Builds a unique shared-memory name for one test case.
+ *
+ * @param buffer Destination buffer.
+ * @param buffer_size Destination buffer size in bytes.
+ * @param suffix Per-test suffix.
+ */
 static void make_region_name(char *buffer, size_t buffer_size, const char *suffix)
 {
     /*
@@ -24,6 +31,9 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     assert((size_t) written < buffer_size);
 }
 
+/**
+ * @brief Verifies that region creation initializes shared header metadata.
+ */
 static void test_create_initializes_header(void)
 {
     char name[64];
@@ -50,6 +60,9 @@ static void test_create_initializes_header(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that a second process-local descriptor can attach to the same mapping.
+ */
 static void test_open_observes_existing_mapping(void)
 {
     char name[64];
@@ -79,6 +92,9 @@ static void test_open_observes_existing_mapping(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that attach rejects a corrupted shared header.
+ */
 static void test_open_rejects_invalid_header(void)
 {
     char name[64];
@@ -104,6 +120,9 @@ static void test_open_rejects_invalid_header(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that region creation rejects sizes smaller than the header.
+ */
 static void test_create_rejects_too_small_region(void)
 {
     char name[64];
@@ -114,6 +133,9 @@ static void test_create_rejects_too_small_region(void)
     assert(shm_region_create(&region, name, shm_region_header_size() - 1) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
 }
 
+/**
+ * @brief Verifies that the process-shared mutex serializes access across processes.
+ */
 static void test_process_shared_mutex_coordinates_access(void)
 {
     char name[64];
@@ -178,6 +200,11 @@ static void test_process_shared_mutex_coordinates_access(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Runs the shared-region unit tests.
+ *
+ * @return Zero on success.
+ */
 int main(void)
 {
     test_create_initializes_header();

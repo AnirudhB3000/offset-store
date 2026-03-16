@@ -9,6 +9,16 @@ _Static_assert(
     "ObjectHeader size must preserve payload alignment"
 );
 
+/**
+ * @brief Resolves and validates an object header plus an optional payload span.
+ *
+ * @param region Region whose mapping contains the object.
+ * @param object Offset handle to the object header.
+ * @param payload_size Additional payload bytes that must fit after the header.
+ * @param[out] out_header Resolved header pointer on success.
+ * @return true if the object resolves to the start of a live allocation.
+ * @return false otherwise.
+ */
 static bool object_store_resolve_header(
     const ShmRegion *region,
     OffsetPtr object,
@@ -40,6 +50,13 @@ static bool object_store_resolve_header(
     return total_size <= allocation_size;
 }
 
+/**
+ * @brief Resolves an object handle to a read-only header pointer.
+ *
+ * @param region Region whose mapping contains the object.
+ * @param object Offset handle to resolve.
+ * @return Read-only header pointer on success, or `NULL` on failure.
+ */
 const ObjectHeader *object_store_header(const ShmRegion *region, OffsetPtr object)
 {
     void *resolved;
@@ -51,6 +68,13 @@ const ObjectHeader *object_store_header(const ShmRegion *region, OffsetPtr objec
     return (const ObjectHeader *) resolved;
 }
 
+/**
+ * @brief Resolves an object handle to a mutable header pointer.
+ *
+ * @param region Region whose mapping contains the object.
+ * @param object Offset handle to resolve.
+ * @return Mutable header pointer on success, or `NULL` on failure.
+ */
 ObjectHeader *object_store_header_mut(ShmRegion *region, OffsetPtr object)
 {
     void *resolved;
@@ -62,6 +86,13 @@ ObjectHeader *object_store_header_mut(ShmRegion *region, OffsetPtr object)
     return (ObjectHeader *) resolved;
 }
 
+/**
+ * @brief Resolves an object handle to a read-only payload pointer.
+ *
+ * @param region Region whose mapping contains the object.
+ * @param object Offset handle to resolve.
+ * @return Read-only payload pointer on success, or `NULL` on failure.
+ */
 const void *object_store_payload_const(const ShmRegion *region, OffsetPtr object)
 {
     const ObjectHeader *header;
@@ -79,11 +110,27 @@ const void *object_store_payload_const(const ShmRegion *region, OffsetPtr object
     return (const unsigned char *) resolved + sizeof(ObjectHeader);
 }
 
+/**
+ * @brief Resolves an object handle to a mutable payload pointer.
+ *
+ * @param region Region whose mapping contains the object.
+ * @param object Offset handle to resolve.
+ * @return Mutable payload pointer on success, or `NULL` on failure.
+ */
 void *object_store_payload(ShmRegion *region, OffsetPtr object)
 {
     return (void *) object_store_payload_const(region, object);
 }
 
+/**
+ * @brief Allocates a new object and returns its offset handle.
+ *
+ * @param region Region whose allocator should satisfy the request.
+ * @param type Caller-defined object type identifier.
+ * @param payload_size Requested payload size in bytes.
+ * @param[out] out_object Offset handle on success.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus object_store_alloc(ShmRegion *region, uint32_t type, size_t payload_size, OffsetPtr *out_object)
 {
     OffsetStoreStatus status;
@@ -112,6 +159,13 @@ OffsetStoreStatus object_store_alloc(ShmRegion *region, uint32_t type, size_t pa
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Frees an object previously allocated from the object store.
+ *
+ * @param region Region whose allocator owns the object.
+ * @param object Offset handle to free.
+ * @return Status code describing success or failure.
+ */
 OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object)
 {
     ObjectHeader *header;

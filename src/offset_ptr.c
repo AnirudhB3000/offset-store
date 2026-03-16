@@ -3,6 +3,11 @@
 #include <limits.h>
 #include <stdint.h>
 
+/**
+ * @brief Returns the null offset pointer sentinel.
+ *
+ * @return Offset pointer whose offset is zero.
+ */
 OffsetPtr offset_ptr_null(void)
 {
     OffsetPtr ptr;
@@ -11,11 +16,27 @@ OffsetPtr offset_ptr_null(void)
     return ptr;
 }
 
+/**
+ * @brief Returns whether an offset pointer is null.
+ *
+ * @param ptr Offset pointer to inspect.
+ * @return true if the pointer is null.
+ * @return false otherwise.
+ */
 bool offset_ptr_is_null(OffsetPtr ptr)
 {
     return ptr.offset == 0;
 }
 
+/**
+ * @brief Returns whether an offset span lies within the mapped region.
+ *
+ * @param region_size Size of the mapped region in bytes.
+ * @param ptr Offset pointer describing the span start.
+ * @param span Requested span size in bytes.
+ * @return true if the span is valid and fully in bounds.
+ * @return false otherwise.
+ */
 bool offset_ptr_is_in_bounds(size_t region_size, OffsetPtr ptr, size_t span)
 {
     uint64_t span_u64;
@@ -42,6 +63,16 @@ bool offset_ptr_is_in_bounds(size_t region_size, OffsetPtr ptr, size_t span)
     return true;
 }
 
+/**
+ * @brief Converts a process-local pointer into an offset pointer.
+ *
+ * @param base Base address of the mapped region.
+ * @param region_size Size of the mapped region in bytes.
+ * @param ptr Process-local pointer to convert.
+ * @param[out] out_ptr Converted offset pointer on success.
+ * @return true if conversion succeeds.
+ * @return false otherwise.
+ */
 bool offset_ptr_try_from_raw(
     const void *base,
     size_t region_size,
@@ -76,6 +107,17 @@ bool offset_ptr_try_from_raw(
     return true;
 }
 
+/**
+ * @brief Resolves an offset pointer into a mutable process-local pointer.
+ *
+ * @param base Base address of the mapped region.
+ * @param region_size Size of the mapped region in bytes.
+ * @param ptr Offset pointer to resolve.
+ * @param span Requested access span in bytes.
+ * @param[out] out_raw Resolved pointer on success.
+ * @return true if resolution succeeds.
+ * @return false otherwise.
+ */
 bool offset_ptr_try_resolve(
     const void *base,
     size_t region_size,
@@ -99,6 +141,17 @@ bool offset_ptr_try_resolve(
     return true;
 }
 
+/**
+ * @brief Resolves an offset pointer into a const process-local pointer.
+ *
+ * @param base Base address of the mapped region.
+ * @param region_size Size of the mapped region in bytes.
+ * @param ptr Offset pointer to resolve.
+ * @param span Requested access span in bytes.
+ * @param[out] out_raw Resolved const pointer on success.
+ * @return true if resolution succeeds.
+ * @return false otherwise.
+ */
 bool offset_ptr_try_resolve_const(
     const void *base,
     size_t region_size,
