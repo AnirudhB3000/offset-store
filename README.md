@@ -204,23 +204,6 @@ pointer does not.
 The shared heap uses a custom allocator that operates entirely inside the shared
 memory segment.
 
-Initial allocator target:
-
-- free-list allocator
-
-Rationale:
-
-- simple to reason about
-- easy to instrument
-- compatible with deterministic layouts
-- suitable for learning and early validation
-
-Later possible upgrades:
-
-- slab allocator
-- segregated size classes
-- buddy allocator
-
 Allocator requirements:
 
 - allocator metadata must live inside shared memory

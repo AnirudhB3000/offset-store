@@ -4,3 +4,4 @@ build/
 *.so
 *.out
 TODO.md
+.vscode/
