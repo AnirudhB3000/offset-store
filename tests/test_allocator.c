@@ -45,8 +45,8 @@ static void test_allocator_init_and_validate(void)
     assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
     assert(allocator_validate(&region) == OFFSET_STORE_STATUS_OK);
 
-    assert(allocator_heap_offset(&region, &heap_offset) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_free_list_head(&region, &free_list_head) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_heap_offset(&region, &heap_offset) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_free_list_head(&region, &free_list_head) == OFFSET_STORE_STATUS_OK);
     assert(free_list_head.offset == heap_offset);
 
     assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
@@ -171,12 +171,12 @@ static void test_allocator_state_is_visible_after_attach(void)
     assert(shm_region_open(&attached_region, name) == OFFSET_STORE_STATUS_OK);
     assert(allocator_validate(&attached_region) == OFFSET_STORE_STATUS_OK);
 
-    assert(allocator_heap_offset(&creator_region, &creator_heap_offset) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_heap_offset(&attached_region, &attached_heap_offset) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_heap_size(&creator_region, &creator_heap_size) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_heap_size(&attached_region, &attached_heap_size) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_free_list_head(&creator_region, &creator_free_list_head) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_free_list_head(&attached_region, &attached_free_list_head) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_heap_offset(&creator_region, &creator_heap_offset) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_heap_offset(&attached_region, &attached_heap_offset) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_heap_size(&creator_region, &creator_heap_size) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_heap_size(&attached_region, &attached_heap_size) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_free_list_head(&creator_region, &creator_free_list_head) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_free_list_head(&attached_region, &attached_free_list_head) == OFFSET_STORE_STATUS_OK);
     assert(creator_heap_offset == attached_heap_offset);
     assert(creator_heap_size == attached_heap_size);
     assert(creator_free_list_head.offset == attached_free_list_head.offset);

@@ -23,9 +23,7 @@ allocator and object-store internals, see
 [`src/README.md`](/home/aniru/offset-store/src/README.md).
 
 Code documentation now follows a Doxygen-style convention for public headers,
-implementation helpers, tests, and examples. A small set of files currently
-owned by `root` may still need the same comment pass before the repository is
-fully uniform.
+implementation helpers, tests, and examples.
 
 At the time of writing, the repository contains project instructions, top-level
 documentation, initial repository scaffolding, and the first implemented modules:
@@ -305,6 +303,14 @@ Current lifecycle direction:
 - duplicate bootstrap/create attempts fail with `OFFSET_STORE_STATUS_ALREADY_EXISTS`
 - duplicate allocator initialization fails with `OFFSET_STORE_STATUS_ALREADY_EXISTS`
 - lower-level `shm_region` and `allocator` APIs remain available when finer-grained control is needed
+
+Current accessor naming direction:
+
+- query-style helpers now consistently use `get` prefixes
+- examples include `shm_region_get_version(...)`, `allocator_get_heap_size(...)`,
+  and `object_store_get_payload(...)`
+- mutable object accessors use the explicit `_mut` suffix via
+  `object_store_get_header_mut(...)`
 
 Potential future header fields:
 

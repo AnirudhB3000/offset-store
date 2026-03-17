@@ -186,7 +186,7 @@ static bool allocator_header_valid(const ShmRegion *region, const AllocatorHeade
  * @param[out] out_heap_offset Heap start offset on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus allocator_heap_offset(const ShmRegion *region, uint64_t *out_heap_offset)
+OffsetStoreStatus allocator_get_heap_offset(const ShmRegion *region, uint64_t *out_heap_offset)
 {
     const AllocatorHeader *header;
 
@@ -210,7 +210,7 @@ OffsetStoreStatus allocator_heap_offset(const ShmRegion *region, uint64_t *out_h
  * @param[out] out_heap_size Heap size on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus allocator_heap_size(const ShmRegion *region, uint64_t *out_heap_size)
+OffsetStoreStatus allocator_get_heap_size(const ShmRegion *region, uint64_t *out_heap_size)
 {
     const AllocatorHeader *header;
 
@@ -234,7 +234,7 @@ OffsetStoreStatus allocator_heap_size(const ShmRegion *region, uint64_t *out_hea
  * @param[out] out_head Free-list head on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus allocator_free_list_head(const ShmRegion *region, OffsetPtr *out_head)
+OffsetStoreStatus allocator_get_free_list_head(const ShmRegion *region, OffsetPtr *out_head)
 {
     const AllocatorHeader *header;
 
@@ -338,7 +338,7 @@ static bool allocator_block_is_in_heap(const AllocatorHeader *header, OffsetPtr 
  * @param[out] out_size Allocation span on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus allocator_allocation_span(const ShmRegion *region, const void *ptr, size_t *out_size)
+OffsetStoreStatus allocator_get_allocation_span(const ShmRegion *region, const void *ptr, size_t *out_size)
 {
     const AllocatorHeader *header;
     size_t traversed;

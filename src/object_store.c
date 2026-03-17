@@ -43,7 +43,7 @@ static bool object_store_resolve_header(
     }
 
     /* Object handles must point to the start of a live allocator allocation. */
-    if (allocator_allocation_span(region, *out_header, &allocation_size) != OFFSET_STORE_STATUS_OK) {
+    if (allocator_get_allocation_span(region, *out_header, &allocation_size) != OFFSET_STORE_STATUS_OK) {
         return false;
     }
 
@@ -57,7 +57,7 @@ static bool object_store_resolve_header(
  * @param object Offset handle to resolve.
  * @return Read-only header pointer on success, or `NULL` on failure.
  */
-const ObjectHeader *object_store_header(const ShmRegion *region, OffsetPtr object)
+const ObjectHeader *object_store_get_header(const ShmRegion *region, OffsetPtr object)
 {
     void *resolved;
 
@@ -75,7 +75,7 @@ const ObjectHeader *object_store_header(const ShmRegion *region, OffsetPtr objec
  * @param object Offset handle to resolve.
  * @return Mutable header pointer on success, or `NULL` on failure.
  */
-ObjectHeader *object_store_header_mut(ShmRegion *region, OffsetPtr object)
+ObjectHeader *object_store_get_header_mut(ShmRegion *region, OffsetPtr object)
 {
     void *resolved;
 
@@ -93,12 +93,12 @@ ObjectHeader *object_store_header_mut(ShmRegion *region, OffsetPtr object)
  * @param object Offset handle to resolve.
  * @return Read-only payload pointer on success, or `NULL` on failure.
  */
-const void *object_store_payload_const(const ShmRegion *region, OffsetPtr object)
+const void *object_store_get_payload_const(const ShmRegion *region, OffsetPtr object)
 {
     const ObjectHeader *header;
     void *resolved;
 
-    header = object_store_header(region, object);
+    header = object_store_get_header(region, object);
     if (header == NULL) {
         return NULL;
     }
@@ -117,9 +117,9 @@ const void *object_store_payload_const(const ShmRegion *region, OffsetPtr object
  * @param object Offset handle to resolve.
  * @return Mutable payload pointer on success, or `NULL` on failure.
  */
-void *object_store_payload(ShmRegion *region, OffsetPtr object)
+void *object_store_get_payload(ShmRegion *region, OffsetPtr object)
 {
-    return (void *) object_store_payload_const(region, object);
+    return (void *) object_store_get_payload_const(region, object);
 }
 
 /**
@@ -174,7 +174,7 @@ OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object)
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    header = object_store_header_mut(region, object);
+    header = object_store_get_header_mut(region, object);
     if (header == NULL) {
         return OFFSET_STORE_STATUS_NOT_FOUND;
     }

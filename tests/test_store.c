@@ -6,6 +6,13 @@
 #include <stdio.h>
 #include <unistd.h>
 
+/**
+ * @brief Builds a unique shared-memory name for one lifecycle test.
+ *
+ * @param buffer Destination buffer.
+ * @param buffer_size Destination buffer size in bytes.
+ * @param suffix Per-test suffix.
+ */
 static void make_region_name(char *buffer, size_t buffer_size, const char *suffix)
 {
     int written;
@@ -19,6 +26,9 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     assert((size_t) written < buffer_size);
 }
 
+/**
+ * @brief Verifies that bootstrap creates a store with valid allocator state.
+ */
 static void test_bootstrap_initializes_allocator_state(void)
 {
     char name[64];
@@ -33,6 +43,9 @@ static void test_bootstrap_initializes_allocator_state(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that bootstrap is one-shot for a given shared-memory name.
+ */
 static void test_bootstrap_is_one_shot_per_region_name(void)
 {
     char name[64];
@@ -49,6 +62,9 @@ static void test_bootstrap_is_one_shot_per_region_name(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that opening an existing store attaches to initialized state.
+ */
 static void test_open_existing_attaches_to_initialized_store(void)
 {
     char name[64];
@@ -69,6 +85,9 @@ static void test_open_existing_attaches_to_initialized_store(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Verifies that opening rejects a region without allocator metadata.
+ */
 static void test_open_existing_rejects_region_without_allocator_state(void)
 {
     char name[64];
@@ -85,6 +104,11 @@ static void test_open_existing_rejects_region_without_allocator_state(void)
     assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
 }
 
+/**
+ * @brief Runs the store lifecycle unit tests.
+ *
+ * @return Zero on success.
+ */
 int main(void)
 {
     test_bootstrap_initializes_allocator_state();

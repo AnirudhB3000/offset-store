@@ -52,7 +52,7 @@ OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object);
  * @param object Offset handle to the object header.
  * @return Read-only header pointer on success, or `NULL` on failure.
  */
-const ObjectHeader *object_store_header(const ShmRegion *region, OffsetPtr object);
+const ObjectHeader *object_store_get_header(const ShmRegion *region, OffsetPtr object);
 /**
  * @brief Resolves an object handle to a mutable header pointer.
  *
@@ -60,7 +60,7 @@ const ObjectHeader *object_store_header(const ShmRegion *region, OffsetPtr objec
  * @param object Offset handle to the object header.
  * @return Mutable header pointer on success, or `NULL` on failure.
  */
-ObjectHeader *object_store_header_mut(ShmRegion *region, OffsetPtr object);
+ObjectHeader *object_store_get_header_mut(ShmRegion *region, OffsetPtr object);
 /**
  * @brief Resolves an object handle to a read-only payload pointer.
  *
@@ -68,7 +68,7 @@ ObjectHeader *object_store_header_mut(ShmRegion *region, OffsetPtr object);
  * @param object Offset handle to the object header.
  * @return Read-only payload pointer on success, or `NULL` on failure.
  */
-const void *object_store_payload_const(const ShmRegion *region, OffsetPtr object);
+const void *object_store_get_payload_const(const ShmRegion *region, OffsetPtr object);
 /**
  * @brief Resolves an object handle to a mutable payload pointer.
  *
@@ -76,6 +76,6 @@ const void *object_store_payload_const(const ShmRegion *region, OffsetPtr object
  * @param object Offset handle to the object header.
  * @return Mutable payload pointer on success, or `NULL` on failure.
  */
-void *object_store_payload(ShmRegion *region, OffsetPtr object);
+void *object_store_get_payload(ShmRegion *region, OffsetPtr object);
 
 #endif

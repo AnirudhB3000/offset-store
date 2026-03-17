@@ -58,12 +58,12 @@ static void test_object_alloc_and_resolve(void)
     assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
     assert(object_store_alloc(&region, 7, 32, &object) == OFFSET_STORE_STATUS_OK);
 
-    header = object_store_header_mut(&region, object);
+    header = object_store_get_header_mut(&region, object);
     assert(header != NULL);
     assert(header->type == 7);
     assert(header->size == 32);
 
-    payload = (uint8_t *) object_store_payload(&region, object);
+    payload = (uint8_t *) object_store_get_payload(&region, object);
     assert(payload != NULL);
     memset(payload, 0xab, 32);
     assert(payload[0] == 0xab);
@@ -92,13 +92,13 @@ static void test_object_offset_is_stable_across_attach(void)
     assert(allocator_init(&creator_region) == OFFSET_STORE_STATUS_OK);
     assert(object_store_alloc(&creator_region, 9, 8, &object) == OFFSET_STORE_STATUS_OK);
 
-    creator_payload = (uint8_t *) object_store_payload(&creator_region, object);
+    creator_payload = (uint8_t *) object_store_get_payload(&creator_region, object);
     assert(creator_payload != NULL);
     creator_payload[0] = 0x11;
     creator_payload[1] = 0x22;
 
     assert(shm_region_open(&attached_region, name) == OFFSET_STORE_STATUS_OK);
-    attached_payload = (const uint8_t *) object_store_payload_const(&attached_region, object);
+    attached_payload = (const uint8_t *) object_store_get_payload_const(&attached_region, object);
     assert(attached_payload != NULL);
     assert(attached_payload[0] == 0x11);
     assert(attached_payload[1] == 0x22);
@@ -148,8 +148,8 @@ static void test_object_rejects_invalid_offset(void)
     assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
 
     invalid.offset = 8;
-    assert(object_store_header(&region, invalid) == NULL);
-    assert(object_store_payload_const(&region, invalid) == NULL);
+    assert(object_store_get_header(&region, invalid) == NULL);
+    assert(object_store_get_payload_const(&region, invalid) == NULL);
     assert(object_store_free(&region, invalid) == OFFSET_STORE_STATUS_NOT_FOUND);
 
     assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);

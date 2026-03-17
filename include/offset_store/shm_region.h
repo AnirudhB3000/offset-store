@@ -91,7 +91,7 @@ size_t shm_region_header_size(void);
  * @param[out] out_total_size Total size in bytes on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus shm_region_total_size(const ShmRegion *region, uint64_t *out_total_size);
+OffsetStoreStatus shm_region_get_total_size(const ShmRegion *region, uint64_t *out_total_size);
 /**
  * @brief Returns the layout version recorded in the shared header.
  *
@@ -99,7 +99,7 @@ OffsetStoreStatus shm_region_total_size(const ShmRegion *region, uint64_t *out_t
  * @param[out] out_version Region version on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus shm_region_version(const ShmRegion *region, uint32_t *out_version);
+OffsetStoreStatus shm_region_get_version(const ShmRegion *region, uint32_t *out_version);
 /**
  * @brief Returns the first byte after the private shared region header.
  *

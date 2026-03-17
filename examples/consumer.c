@@ -41,8 +41,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    header = object_store_header(&store.region, object);
-    payload = (const char *) object_store_payload_const(&store.region, object);
+    header = object_store_get_header(&store.region, object);
+    payload = (const char *) object_store_get_payload_const(&store.region, object);
     if (header == NULL || payload == NULL) {
         fprintf(stderr, "failed to resolve object at offset %llu\n",
             (unsigned long long) object.offset);

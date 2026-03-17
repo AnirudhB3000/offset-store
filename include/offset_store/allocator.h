@@ -59,7 +59,7 @@ OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr);
  * @param[out] out_size Allocation span in bytes on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus allocator_allocation_span(const ShmRegion *region, const void *ptr, size_t *out_size);
+OffsetStoreStatus allocator_get_allocation_span(const ShmRegion *region, const void *ptr, size_t *out_size);
 /**
  * @brief Returns the heap start offset recorded in allocator metadata.
  *
@@ -67,7 +67,7 @@ OffsetStoreStatus allocator_allocation_span(const ShmRegion *region, const void 
  * @param[out] out_heap_offset Heap start offset in bytes on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus allocator_heap_offset(const ShmRegion *region, uint64_t *out_heap_offset);
+OffsetStoreStatus allocator_get_heap_offset(const ShmRegion *region, uint64_t *out_heap_offset);
 /**
  * @brief Returns the total heap size recorded in allocator metadata.
  *
@@ -75,7 +75,7 @@ OffsetStoreStatus allocator_heap_offset(const ShmRegion *region, uint64_t *out_h
  * @param[out] out_heap_size Heap size in bytes on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus allocator_heap_size(const ShmRegion *region, uint64_t *out_heap_size);
+OffsetStoreStatus allocator_get_heap_size(const ShmRegion *region, uint64_t *out_heap_size);
 /**
  * @brief Returns the current free-list head offset.
  *
@@ -83,6 +83,6 @@ OffsetStoreStatus allocator_heap_size(const ShmRegion *region, uint64_t *out_hea
  * @param[out] out_head Free-list head on success.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus allocator_free_list_head(const ShmRegion *region, OffsetPtr *out_head);
+OffsetStoreStatus allocator_get_free_list_head(const ShmRegion *region, OffsetPtr *out_head);
 
 #endif

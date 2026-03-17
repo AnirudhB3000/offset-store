@@ -57,7 +57,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    payload = (char *) object_store_payload(&store.region, object);
+    payload = (char *) object_store_get_payload(&store.region, object);
     if (payload == NULL) {
         fprintf(stderr, "failed to resolve payload\n");
         offset_store_close(&store);

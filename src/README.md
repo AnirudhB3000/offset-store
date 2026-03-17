@@ -226,10 +226,10 @@ treated as valid objects just because they point somewhere inside the mapping.
 
 Public helpers are thin wrappers around that resolution:
 
-- `object_store_header(...)`
-- `object_store_header_mut(...)`
-- `object_store_payload_const(...)`
-- `object_store_payload(...)`
+- `object_store_get_header(...)`
+- `object_store_get_header_mut(...)`
+- `object_store_get_payload_const(...)`
+- `object_store_get_payload(...)`
 
 ### Free Flow
 

@@ -51,9 +51,9 @@ static void test_create_initializes_header(void)
     assert(shm_region_header_size() > 0);
     assert(shm_region_usable_size(&region) == 4096 - shm_region_header_size());
 
-    assert(shm_region_version(&region, &version) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_get_version(&region, &version) == OFFSET_STORE_STATUS_OK);
     assert(version == OFFSET_STORE_REGION_VERSION);
-    assert(shm_region_total_size(&region, &total_size) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_get_total_size(&region, &total_size) == OFFSET_STORE_STATUS_OK);
     assert(total_size == 4096);
 
     assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
