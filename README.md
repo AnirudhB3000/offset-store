@@ -785,7 +785,12 @@ The repository now includes a first unit test:
 - `tests/test_store.c`
 
 The current `Makefile` builds all test files under `tests/` and links them against the
-current sources under `src/`. Running `make test` executes every produced test binary.
+current sources under `src/`, together with the vendored Unity framework under
+`third_party/unity/`. Running `make test` executes every produced test binary.
+Each test remains a standalone executable, but assertion reporting now comes from
+Unity rather than raw C `assert(...)`. After the per-binary Unity output, `make test`
+also prints a suite-level summary of how many tests ran, passed, failed, and were
+ignored.
 The shared-memory test suite includes a fork-based check that verifies the region mutex
 coordinates access across processes.
 The same `Makefile` also builds the example binaries under `build/`.

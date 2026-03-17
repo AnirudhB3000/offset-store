@@ -4,12 +4,27 @@
 
 #include "offset_store/allocator.h"
 
-#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdalign.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "unity.h"
+
+/**
+ * @brief Provides per-test setup for Unity.
+ */
+void setUp(void)
+{
+}
+
+/**
+ * @brief Provides per-test teardown for Unity.
+ */
+void tearDown(void)
+{
+}
 
 /**
  * @brief Builds a unique shared-memory name for one object-store test.
@@ -27,8 +42,8 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     int written;
 
     written = snprintf(buffer, buffer_size, "/offset-store-%ld-%s", (long) getpid(), suffix);
-    assert(written > 0);
-    assert((size_t) written < buffer_size);
+    TEST_ASSERT_TRUE(written > 0);
+    TEST_ASSERT_TRUE((size_t) written < buffer_size);
 }
 
 /**
@@ -36,8 +51,8 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
  */
 static void test_object_header_layout(void)
 {
-    assert(sizeof(ObjectHeader) == 16);
-    assert((sizeof(ObjectHeader) % alignof(max_align_t)) == 0);
+    TEST_ASSERT_EQUAL_UINT64(16, sizeof(ObjectHeader));
+    TEST_ASSERT_EQUAL_UINT64(0, sizeof(ObjectHeader) % alignof(max_align_t));
 }
 
 /**
@@ -52,25 +67,25 @@ static void test_object_alloc_and_resolve(void)
     uint8_t *payload;
 
     make_region_name(name, sizeof(name), "object-alloc");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(object_store_alloc(&region, 7, 32, &object) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_alloc(&region, 7, 32, &object));
 
     header = object_store_get_header_mut(&region, object);
-    assert(header != NULL);
-    assert(header->type == 7);
-    assert(header->size == 32);
+    TEST_ASSERT_NOT_NULL(header);
+    TEST_ASSERT_EQUAL_UINT32(7, header->type);
+    TEST_ASSERT_EQUAL_UINT64(32, header->size);
 
     payload = (uint8_t *) object_store_get_payload(&region, object);
-    assert(payload != NULL);
+    TEST_ASSERT_NOT_NULL(payload);
     memset(payload, 0xab, 32);
-    assert(payload[0] == 0xab);
-    assert(payload[31] == 0xab);
+    TEST_ASSERT_EQUAL_UINT8(0xab, payload[0]);
+    TEST_ASSERT_EQUAL_UINT8(0xab, payload[31]);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -86,26 +101,26 @@ static void test_object_offset_is_stable_across_attach(void)
     const uint8_t *attached_payload;
 
     make_region_name(name, sizeof(name), "object-attach");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&creator_region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&creator_region) == OFFSET_STORE_STATUS_OK);
-    assert(object_store_alloc(&creator_region, 9, 8, &object) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&creator_region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&creator_region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_alloc(&creator_region, 9, 8, &object));
 
     creator_payload = (uint8_t *) object_store_get_payload(&creator_region, object);
-    assert(creator_payload != NULL);
+    TEST_ASSERT_NOT_NULL(creator_payload);
     creator_payload[0] = 0x11;
     creator_payload[1] = 0x22;
 
-    assert(shm_region_open(&attached_region, name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_open(&attached_region, name));
     attached_payload = (const uint8_t *) object_store_get_payload_const(&attached_region, object);
-    assert(attached_payload != NULL);
-    assert(attached_payload[0] == 0x11);
-    assert(attached_payload[1] == 0x22);
+    TEST_ASSERT_NOT_NULL(attached_payload);
+    TEST_ASSERT_EQUAL_UINT8(0x11, attached_payload[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x22, attached_payload[1]);
 
-    assert(shm_region_close(&attached_region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_close(&creator_region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&attached_region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&creator_region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -119,17 +134,17 @@ static void test_object_free_releases_storage(void)
     OffsetPtr second;
 
     make_region_name(name, sizeof(name), "object-free");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(object_store_alloc(&region, 1, 24, &first) == OFFSET_STORE_STATUS_OK);
-    assert(object_store_free(&region, first) == OFFSET_STORE_STATUS_OK);
-    assert(object_store_alloc(&region, 2, 24, &second) == OFFSET_STORE_STATUS_OK);
-    assert(second.offset == first.offset);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_alloc(&region, 1, 24, &first));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_free(&region, first));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_alloc(&region, 2, 24, &second));
+    TEST_ASSERT_EQUAL_UINT64(first.offset, second.offset);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -142,18 +157,18 @@ static void test_object_rejects_invalid_offset(void)
     OffsetPtr invalid;
 
     make_region_name(name, sizeof(name), "object-invalid");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
 
     invalid.offset = 8;
-    assert(object_store_get_header(&region, invalid) == NULL);
-    assert(object_store_get_payload_const(&region, invalid) == NULL);
-    assert(object_store_free(&region, invalid) == OFFSET_STORE_STATUS_NOT_FOUND);
+    TEST_ASSERT_NULL(object_store_get_header(&region, invalid));
+    TEST_ASSERT_NULL(object_store_get_payload_const(&region, invalid));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_NOT_FOUND, object_store_free(&region, invalid));
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -170,32 +185,35 @@ static void test_object_getters_are_consistent(void)
     uint8_t *mutable_payload;
 
     make_region_name(name, sizeof(name), "object-getters");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(object_store_alloc(&region, 17, 40, &object) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_alloc(&region, 17, 40, &object));
 
     const_header = object_store_get_header(&region, object);
     mutable_header = object_store_get_header_mut(&region, object);
     const_payload = (const uint8_t *) object_store_get_payload_const(&region, object);
     mutable_payload = (uint8_t *) object_store_get_payload(&region, object);
 
-    assert(const_header != NULL);
-    assert(mutable_header != NULL);
-    assert(const_payload != NULL);
-    assert(mutable_payload != NULL);
-    assert((const void *) const_header == (const void *) mutable_header);
-    assert((const void *) const_payload == (const void *) mutable_payload);
-    assert((const unsigned char *) const_payload == ((const unsigned char *) const_header + sizeof(ObjectHeader)));
+    TEST_ASSERT_NOT_NULL(const_header);
+    TEST_ASSERT_NOT_NULL(mutable_header);
+    TEST_ASSERT_NOT_NULL(const_payload);
+    TEST_ASSERT_NOT_NULL(mutable_payload);
+    TEST_ASSERT_EQUAL_PTR(const_header, mutable_header);
+    TEST_ASSERT_EQUAL_PTR(const_payload, mutable_payload);
+    TEST_ASSERT_EQUAL_PTR(
+        (const unsigned char *) const_header + sizeof(ObjectHeader),
+        const_payload
+    );
 
     mutable_header->flags = 0x12345678u;
     mutable_payload[0] = 0x5c;
-    assert(const_header->flags == 0x12345678u);
-    assert(const_payload[0] == 0x5c);
+    TEST_ASSERT_EQUAL_HEX32(0x12345678u, const_header->flags);
+    TEST_ASSERT_EQUAL_UINT8(0x5c, const_payload[0]);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -207,10 +225,10 @@ static void test_object_getters_reject_invalid_arguments(void)
 
     null_object.offset = 0;
 
-    assert(object_store_get_header(NULL, null_object) == NULL);
-    assert(object_store_get_header_mut(NULL, null_object) == NULL);
-    assert(object_store_get_payload_const(NULL, null_object) == NULL);
-    assert(object_store_get_payload(NULL, null_object) == NULL);
+    TEST_ASSERT_NULL(object_store_get_header(NULL, null_object));
+    TEST_ASSERT_NULL(object_store_get_header_mut(NULL, null_object));
+    TEST_ASSERT_NULL(object_store_get_payload_const(NULL, null_object));
+    TEST_ASSERT_NULL(object_store_get_payload(NULL, null_object));
 }
 
 /**
@@ -220,12 +238,13 @@ static void test_object_getters_reject_invalid_arguments(void)
  */
 int main(void)
 {
-    test_object_header_layout();
-    test_object_alloc_and_resolve();
-    test_object_offset_is_stable_across_attach();
-    test_object_free_releases_storage();
-    test_object_rejects_invalid_offset();
-    test_object_getters_are_consistent();
-    test_object_getters_reject_invalid_arguments();
-    return 0;
+    UNITY_BEGIN();
+    RUN_TEST(test_object_header_layout);
+    RUN_TEST(test_object_alloc_and_resolve);
+    RUN_TEST(test_object_offset_is_stable_across_attach);
+    RUN_TEST(test_object_free_releases_storage);
+    RUN_TEST(test_object_rejects_invalid_offset);
+    RUN_TEST(test_object_getters_are_consistent);
+    RUN_TEST(test_object_getters_reject_invalid_arguments);
+    return UNITY_END();
 }

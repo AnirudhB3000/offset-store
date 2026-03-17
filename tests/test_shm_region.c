@@ -2,7 +2,6 @@
 
 #include "offset_store/shm_region.h"
 
-#include <assert.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <stdint.h>
@@ -10,6 +9,22 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include "unity.h"
+
+/**
+ * @brief Provides per-test setup for Unity.
+ */
+void setUp(void)
+{
+}
+
+/**
+ * @brief Provides per-test teardown for Unity.
+ */
+void tearDown(void)
+{
+}
 
 /**
  * @brief Builds a unique shared-memory name for one test case.
@@ -27,8 +42,8 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     int written;
 
     written = snprintf(buffer, buffer_size, "/offset-store-%ld-%s", (long) getpid(), suffix);
-    assert(written > 0);
-    assert((size_t) written < buffer_size);
+    TEST_ASSERT_TRUE(written > 0);
+    TEST_ASSERT_TRUE((size_t) written < buffer_size);
 }
 
 /**
@@ -42,22 +57,22 @@ static void test_create_initializes_header(void)
     uint64_t total_size;
 
     make_region_name(name, sizeof(name), "create");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(region.creator);
-    assert(region.base != NULL);
-    assert(region.size == 4096);
-    assert(shm_region_header_size() > 0);
-    assert(shm_region_usable_size(&region) == 4096 - shm_region_header_size());
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_TRUE(region.creator);
+    TEST_ASSERT_NOT_NULL(region.base);
+    TEST_ASSERT_EQUAL_UINT64(4096, region.size);
+    TEST_ASSERT_TRUE(shm_region_header_size() > 0);
+    TEST_ASSERT_EQUAL_UINT64(4096 - shm_region_header_size(), shm_region_usable_size(&region));
 
-    assert(shm_region_get_version(&region, &version) == OFFSET_STORE_STATUS_OK);
-    assert(version == OFFSET_STORE_REGION_VERSION);
-    assert(shm_region_get_total_size(&region, &total_size) == OFFSET_STORE_STATUS_OK);
-    assert(total_size == 4096);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_get_version(&region, &version));
+    TEST_ASSERT_EQUAL_UINT32(OFFSET_STORE_REGION_VERSION, version);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_get_total_size(&region, &total_size));
+    TEST_ASSERT_EQUAL_UINT64(4096, total_size);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -72,24 +87,24 @@ static void test_open_observes_existing_mapping(void)
     const uint8_t *attached_data;
 
     make_region_name(name, sizeof(name), "attach");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&creator_region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&creator_region, name, 4096));
     creator_data = (uint8_t *) shm_region_data(&creator_region);
-    assert(creator_data != NULL);
+    TEST_ASSERT_NOT_NULL(creator_data);
     creator_data[0] = 0x5a;
     creator_data[1] = 0xa5;
 
-    assert(shm_region_open(&attached_region, name) == OFFSET_STORE_STATUS_OK);
-    assert(!attached_region.creator);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_open(&attached_region, name));
+    TEST_ASSERT_FALSE(attached_region.creator);
     attached_data = (const uint8_t *) shm_region_data_const(&attached_region);
-    assert(attached_data != NULL);
-    assert(attached_data[0] == 0x5a);
-    assert(attached_data[1] == 0xa5);
+    TEST_ASSERT_NOT_NULL(attached_data);
+    TEST_ASSERT_EQUAL_UINT8(0x5a, attached_data[0]);
+    TEST_ASSERT_EQUAL_UINT8(0xa5, attached_data[1]);
 
-    assert(shm_region_close(&attached_region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_close(&creator_region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&attached_region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&creator_region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -103,21 +118,21 @@ static void test_open_rejects_invalid_header(void)
     uint64_t *magic;
 
     make_region_name(name, sizeof(name), "invalid");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
     /*
      * The header begins at offset zero. Corrupting the first word simulates a
      * damaged region without relying on the private header typedef.
      */
     magic = (uint64_t *) region.base;
-    assert(magic != NULL);
+    TEST_ASSERT_NOT_NULL(magic);
     *magic = 0;
 
-    assert(shm_region_open(&reopened, name) == OFFSET_STORE_STATUS_INVALID_STATE);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, shm_region_open(&reopened, name));
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -129,8 +144,11 @@ static void test_create_rejects_too_small_region(void)
     ShmRegion region;
 
     make_region_name(name, sizeof(name), "small");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
-    assert(shm_region_create(&region, name, shm_region_header_size() - 1) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_INVALID_ARGUMENT,
+        shm_region_create(&region, name, shm_region_header_size() - 1)
+    );
 }
 
 /**
@@ -148,31 +166,31 @@ static void test_process_shared_mutex_coordinates_access(void)
     int status;
 
     make_region_name(name, sizeof(name), "mutex");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
-    assert(pipe(pipe_fds) == 0);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(0, pipe(pipe_fds));
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
     data = (unsigned char *) shm_region_data(&region);
-    assert(data != NULL);
+    TEST_ASSERT_NOT_NULL(data);
     data[0] = 0;
-    assert(shm_region_lock(&region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_lock(&region));
 
     child_pid = fork();
-    assert(child_pid >= 0);
+    TEST_ASSERT_TRUE(child_pid >= 0);
     if (child_pid == 0) {
         ShmRegion child_region;
         unsigned char *child_data;
 
         close(pipe_fds[0]);
-        assert(shm_region_open(&child_region, name) == OFFSET_STORE_STATUS_OK);
-        assert(shm_region_lock(&child_region) == OFFSET_STORE_STATUS_OK);
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_open(&child_region, name));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_lock(&child_region));
         child_data = (unsigned char *) shm_region_data(&child_region);
-        assert(child_data != NULL);
+        TEST_ASSERT_NOT_NULL(child_data);
         child_data[0] = 1;
         signal_byte = 'x';
-        assert(write(pipe_fds[1], &signal_byte, 1) == 1);
-        assert(shm_region_unlock(&child_region) == OFFSET_STORE_STATUS_OK);
-        assert(shm_region_close(&child_region) == OFFSET_STORE_STATUS_OK);
+        TEST_ASSERT_EQUAL_INT(1, write(pipe_fds[1], &signal_byte, 1));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlock(&child_region));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&child_region));
         close(pipe_fds[1]);
         _exit(0);
     }
@@ -182,22 +200,22 @@ static void test_process_shared_mutex_coordinates_access(void)
     poll_fd.events = POLLIN;
 
     /* The child should remain blocked until the parent releases the lock. */
-    assert(poll(&poll_fd, 1, 100) == 0);
-    assert(data[0] == 0);
+    TEST_ASSERT_EQUAL_INT(0, poll(&poll_fd, 1, 100));
+    TEST_ASSERT_EQUAL_UINT8(0, data[0]);
 
-    assert(shm_region_unlock(&region) == OFFSET_STORE_STATUS_OK);
-    assert(poll(&poll_fd, 1, 1000) == 1);
-    assert(read(pipe_fds[0], &signal_byte, 1) == 1);
-    assert(signal_byte == 'x');
-    assert(data[0] == 1);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlock(&region));
+    TEST_ASSERT_EQUAL_INT(1, poll(&poll_fd, 1, 1000));
+    TEST_ASSERT_EQUAL_INT(1, read(pipe_fds[0], &signal_byte, 1));
+    TEST_ASSERT_EQUAL_CHAR('x', signal_byte);
+    TEST_ASSERT_EQUAL_UINT8(1, data[0]);
 
-    assert(waitpid(child_pid, &status, 0) == child_pid);
-    assert(WIFEXITED(status));
-    assert(WEXITSTATUS(status) == 0);
+    TEST_ASSERT_EQUAL_INT(child_pid, waitpid(child_pid, &status, 0));
+    TEST_ASSERT_TRUE(WIFEXITED(status));
+    TEST_ASSERT_EQUAL_INT(0, WEXITSTATUS(status));
 
     close(pipe_fds[0]);
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -211,17 +229,17 @@ static void test_const_data_accessor(void)
     const void *const_data;
 
     make_region_name(name, sizeof(name), "data-const");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
     mutable_data = shm_region_data(&region);
     const_data = shm_region_data_const(&region);
-    assert(mutable_data != NULL);
-    assert(const_data != NULL);
-    assert(const_data == mutable_data);
+    TEST_ASSERT_NOT_NULL(mutable_data);
+    TEST_ASSERT_NOT_NULL(const_data);
+    TEST_ASSERT_EQUAL_PTR(mutable_data, const_data);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -233,16 +251,16 @@ static void test_region_getters_reject_invalid_arguments(void)
     uint32_t version;
     uint64_t total_size;
 
-    assert(shm_region_get_version(NULL, &version) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(shm_region_get_version(&zero_region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(shm_region_get_total_size(NULL, &total_size) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(shm_region_get_total_size(&zero_region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(shm_region_data(NULL) == NULL);
-    assert(shm_region_data_const(NULL) == NULL);
-    assert(shm_region_data(&zero_region) == NULL);
-    assert(shm_region_data_const(&zero_region) == NULL);
-    assert(shm_region_usable_size(NULL) == 0);
-    assert(shm_region_usable_size(&zero_region) == 0);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, shm_region_get_version(NULL, &version));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, shm_region_get_version(&zero_region, NULL));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, shm_region_get_total_size(NULL, &total_size));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, shm_region_get_total_size(&zero_region, NULL));
+    TEST_ASSERT_NULL(shm_region_data(NULL));
+    TEST_ASSERT_NULL(shm_region_data_const(NULL));
+    TEST_ASSERT_NULL(shm_region_data(&zero_region));
+    TEST_ASSERT_NULL(shm_region_data_const(&zero_region));
+    TEST_ASSERT_EQUAL_UINT64(0, shm_region_usable_size(NULL));
+    TEST_ASSERT_EQUAL_UINT64(0, shm_region_usable_size(&zero_region));
 }
 
 /**
@@ -252,12 +270,13 @@ static void test_region_getters_reject_invalid_arguments(void)
  */
 int main(void)
 {
-    test_create_initializes_header();
-    test_open_observes_existing_mapping();
-    test_open_rejects_invalid_header();
-    test_create_rejects_too_small_region();
-    test_process_shared_mutex_coordinates_access();
-    test_const_data_accessor();
-    test_region_getters_reject_invalid_arguments();
-    return 0;
+    UNITY_BEGIN();
+    RUN_TEST(test_create_initializes_header);
+    RUN_TEST(test_open_observes_existing_mapping);
+    RUN_TEST(test_open_rejects_invalid_header);
+    RUN_TEST(test_create_rejects_too_small_region);
+    RUN_TEST(test_process_shared_mutex_coordinates_access);
+    RUN_TEST(test_const_data_accessor);
+    RUN_TEST(test_region_getters_reject_invalid_arguments);
+    return UNITY_END();
 }

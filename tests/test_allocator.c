@@ -2,11 +2,26 @@
 
 #include "offset_store/allocator.h"
 
-#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "unity.h"
+
+/**
+ * @brief Provides per-test setup for Unity.
+ */
+void setUp(void)
+{
+}
+
+/**
+ * @brief Provides per-test teardown for Unity.
+ */
+void tearDown(void)
+{
+}
 
 /**
  * @brief Builds a unique shared-memory name for one allocator test.
@@ -24,8 +39,8 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     int written;
 
     written = snprintf(buffer, buffer_size, "/offset-store-%ld-%s", (long) getpid(), suffix);
-    assert(written > 0);
-    assert((size_t) written < buffer_size);
+    TEST_ASSERT_TRUE(written > 0);
+    TEST_ASSERT_TRUE((size_t) written < buffer_size);
 }
 
 /**
@@ -39,18 +54,18 @@ static void test_allocator_init_and_validate(void)
     uint64_t heap_offset;
 
     make_region_name(name, sizeof(name), "alloc-init");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_validate(&region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_validate(&region));
 
-    assert(allocator_get_heap_offset(&region, &heap_offset) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_free_list_head(&region, &free_list_head) == OFFSET_STORE_STATUS_OK);
-    assert(free_list_head.offset == heap_offset);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_offset(&region, &heap_offset));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_free_list_head(&region, &free_list_head));
+    TEST_ASSERT_EQUAL_UINT64(heap_offset, free_list_head.offset);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -62,14 +77,14 @@ static void test_allocator_init_is_one_shot(void)
     ShmRegion region;
 
     make_region_name(name, sizeof(name), "alloc-one-shot");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_ALREADY_EXISTS);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_ALREADY_EXISTS, allocator_init(&region));
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -83,23 +98,23 @@ static void test_allocator_alloc_and_free_round_trip(void)
     void *reused;
 
     make_region_name(name, sizeof(name), "alloc-free");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
 
-    assert(allocator_alloc(&region, 64, 16, &allocation) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 64, 16, &allocation));
     memset(allocation, 0x5a, 64);
-    assert(allocator_validate(&region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_validate(&region));
 
-    assert(allocator_free(&region, allocation) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_validate(&region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_free(&region, allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_validate(&region));
 
-    assert(allocator_alloc(&region, 64, 16, &reused) == OFFSET_STORE_STATUS_OK);
-    assert(reused == allocation);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 64, 16, &reused));
+    TEST_ASSERT_EQUAL_PTR(allocation, reused);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -112,15 +127,15 @@ static void test_allocator_honors_alignment(void)
     void *allocation;
 
     make_region_name(name, sizeof(name), "alloc-align");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_alloc(&region, 32, 64, &allocation) == OFFSET_STORE_STATUS_OK);
-    assert(((uintptr_t) allocation % 64u) == 0);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 32, 64, &allocation));
+    TEST_ASSERT_EQUAL_UINT64(0, (uintptr_t) allocation % 64u);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -133,16 +148,16 @@ static void test_allocator_rejects_double_free(void)
     void *allocation;
 
     make_region_name(name, sizeof(name), "alloc-double-free");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_alloc(&region, 48, 16, &allocation) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_free(&region, allocation) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_free(&region, allocation) == OFFSET_STORE_STATUS_INVALID_STATE);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 48, 16, &allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_free(&region, allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, allocator_free(&region, allocation));
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -162,28 +177,28 @@ static void test_allocator_state_is_visible_after_attach(void)
     uint64_t attached_heap_size;
 
     make_region_name(name, sizeof(name), "alloc-attach");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&creator_region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&creator_region) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_alloc(&creator_region, 80, 16, &allocation) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&creator_region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&creator_region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&creator_region, 80, 16, &allocation));
 
-    assert(shm_region_open(&attached_region, name) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_validate(&attached_region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_open(&attached_region, name));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_validate(&attached_region));
 
-    assert(allocator_get_heap_offset(&creator_region, &creator_heap_offset) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_heap_offset(&attached_region, &attached_heap_offset) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_heap_size(&creator_region, &creator_heap_size) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_heap_size(&attached_region, &attached_heap_size) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_free_list_head(&creator_region, &creator_free_list_head) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_free_list_head(&attached_region, &attached_free_list_head) == OFFSET_STORE_STATUS_OK);
-    assert(creator_heap_offset == attached_heap_offset);
-    assert(creator_heap_size == attached_heap_size);
-    assert(creator_free_list_head.offset == attached_free_list_head.offset);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_offset(&creator_region, &creator_heap_offset));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_offset(&attached_region, &attached_heap_offset));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_size(&creator_region, &creator_heap_size));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_size(&attached_region, &attached_heap_size));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_free_list_head(&creator_region, &creator_free_list_head));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_free_list_head(&attached_region, &attached_free_list_head));
+    TEST_ASSERT_EQUAL_UINT64(creator_heap_offset, attached_heap_offset);
+    TEST_ASSERT_EQUAL_UINT64(creator_heap_size, attached_heap_size);
+    TEST_ASSERT_EQUAL_UINT64(creator_free_list_head.offset, attached_free_list_head.offset);
 
-    assert(shm_region_close(&attached_region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_close(&creator_region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&attached_region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&creator_region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -196,14 +211,14 @@ static void test_allocator_rejects_invalid_alignment(void)
     void *allocation;
 
     make_region_name(name, sizeof(name), "alloc-align-invalid");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_alloc(&region, 32, 24, &allocation) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_alloc(&region, 32, 24, &allocation));
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -220,23 +235,23 @@ static void test_allocator_getters_report_consistent_state(void)
     size_t allocation_span;
 
     make_region_name(name, sizeof(name), "alloc-getters");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_alloc(&region, 96, 16, &allocation) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 96, 16, &allocation));
 
-    assert(allocator_get_heap_offset(&region, &heap_offset) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_heap_size(&region, &heap_size) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_free_list_head(&region, &free_list_head) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_get_allocation_span(&region, allocation, &allocation_span) == OFFSET_STORE_STATUS_OK);
-    assert(heap_offset >= shm_region_header_size());
-    assert(heap_size > 0);
-    assert(allocation_span >= 96);
-    assert(free_list_head.offset == 0 || free_list_head.offset >= heap_offset);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_offset(&region, &heap_offset));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_size(&region, &heap_size));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_free_list_head(&region, &free_list_head));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_allocation_span(&region, allocation, &allocation_span));
+    TEST_ASSERT_TRUE(heap_offset >= shm_region_header_size());
+    TEST_ASSERT_TRUE(heap_size > 0);
+    TEST_ASSERT_TRUE(allocation_span >= 96);
+    TEST_ASSERT_TRUE(free_list_head.offset == 0 || free_list_head.offset >= heap_offset);
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -252,25 +267,28 @@ static void test_allocator_getters_reject_invalid_arguments(void)
     unsigned char stack_byte;
 
     make_region_name(name, sizeof(name), "alloc-getters-invalid");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(allocator_get_heap_offset(NULL, &heap_value) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(allocator_get_heap_size(NULL, &heap_value) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(allocator_get_free_list_head(NULL, &head_value) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(allocator_get_allocation_span(NULL, &stack_byte, &allocation_span) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_heap_offset(NULL, &heap_value));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_heap_size(NULL, &heap_value));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_free_list_head(NULL, &head_value));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_INVALID_ARGUMENT,
+        allocator_get_allocation_span(NULL, &stack_byte, &allocation_span)
+    );
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
 
-    assert(allocator_get_heap_offset(&region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(allocator_get_heap_size(&region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(allocator_get_free_list_head(&region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(allocator_get_allocation_span(&region, NULL, &allocation_span) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(allocator_get_allocation_span(&region, &stack_byte, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
-    assert(allocator_get_allocation_span(&region, &stack_byte, &allocation_span) == OFFSET_STORE_STATUS_NOT_FOUND);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_heap_offset(&region, NULL));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_heap_size(&region, NULL));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_free_list_head(&region, NULL));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_allocation_span(&region, NULL, &allocation_span));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_allocation_span(&region, &stack_byte, NULL));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_NOT_FOUND, allocator_get_allocation_span(&region, &stack_byte, &allocation_span));
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -280,14 +298,15 @@ static void test_allocator_getters_reject_invalid_arguments(void)
  */
 int main(void)
 {
-    test_allocator_init_and_validate();
-    test_allocator_init_is_one_shot();
-    test_allocator_alloc_and_free_round_trip();
-    test_allocator_honors_alignment();
-    test_allocator_rejects_double_free();
-    test_allocator_state_is_visible_after_attach();
-    test_allocator_rejects_invalid_alignment();
-    test_allocator_getters_report_consistent_state();
-    test_allocator_getters_reject_invalid_arguments();
-    return 0;
+    UNITY_BEGIN();
+    RUN_TEST(test_allocator_init_and_validate);
+    RUN_TEST(test_allocator_init_is_one_shot);
+    RUN_TEST(test_allocator_alloc_and_free_round_trip);
+    RUN_TEST(test_allocator_honors_alignment);
+    RUN_TEST(test_allocator_rejects_double_free);
+    RUN_TEST(test_allocator_state_is_visible_after_attach);
+    RUN_TEST(test_allocator_rejects_invalid_alignment);
+    RUN_TEST(test_allocator_getters_report_consistent_state);
+    RUN_TEST(test_allocator_getters_reject_invalid_arguments);
+    return UNITY_END();
 }

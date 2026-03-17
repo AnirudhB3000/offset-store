@@ -2,9 +2,24 @@
 
 #include "offset_store/store.h"
 
-#include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
+
+#include "unity.h"
+
+/**
+ * @brief Provides per-test setup for Unity.
+ */
+void setUp(void)
+{
+}
+
+/**
+ * @brief Provides per-test teardown for Unity.
+ */
+void tearDown(void)
+{
+}
 
 /**
  * @brief Builds a unique shared-memory name for one lifecycle test.
@@ -22,8 +37,8 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
      * include the PID to keep runs isolated from each other.
      */
     written = snprintf(buffer, buffer_size, "/offset-store-%ld-%s", (long) getpid(), suffix);
-    assert(written > 0);
-    assert((size_t) written < buffer_size);
+    TEST_ASSERT_TRUE(written > 0);
+    TEST_ASSERT_TRUE((size_t) written < buffer_size);
 }
 
 /**
@@ -35,12 +50,12 @@ static void test_bootstrap_initializes_allocator_state(void)
     OffsetStore store;
 
     make_region_name(name, sizeof(name), "store-bootstrap");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(offset_store_bootstrap(&store, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_validate(&store.region) == OFFSET_STORE_STATUS_OK);
-    assert(offset_store_close(&store) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&store, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_validate(&store.region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&store));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -53,13 +68,13 @@ static void test_bootstrap_is_one_shot_per_region_name(void)
     OffsetStore second;
 
     make_region_name(name, sizeof(name), "store-one-shot");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(offset_store_bootstrap(&first, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(offset_store_bootstrap(&second, name, 4096) == OFFSET_STORE_STATUS_ALREADY_EXISTS);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&first, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_ALREADY_EXISTS, offset_store_bootstrap(&second, name, 4096));
 
-    assert(offset_store_close(&first) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&first));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -73,16 +88,16 @@ static void test_open_existing_attaches_to_initialized_store(void)
     void *allocation;
 
     make_region_name(name, sizeof(name), "store-open");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(offset_store_bootstrap(&creator, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_alloc(&creator.region, 64, 16, &allocation) == OFFSET_STORE_STATUS_OK);
-    assert(offset_store_open_existing(&attached, name) == OFFSET_STORE_STATUS_OK);
-    assert(allocator_validate(&attached.region) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&creator, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&creator.region, 64, 16, &allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_open_existing(&attached, name));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_validate(&attached.region));
 
-    assert(offset_store_close(&attached) == OFFSET_STORE_STATUS_OK);
-    assert(offset_store_close(&creator) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&attached));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&creator));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -95,13 +110,13 @@ static void test_open_existing_rejects_region_without_allocator_state(void)
     ShmRegion region;
 
     make_region_name(name, sizeof(name), "store-invalid");
-    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
 
-    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
-    assert(offset_store_open_existing(&attached, name) == OFFSET_STORE_STATUS_INVALID_STATE);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, offset_store_open_existing(&attached, name));
 
-    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
-    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
 /**
@@ -111,9 +126,10 @@ static void test_open_existing_rejects_region_without_allocator_state(void)
  */
 int main(void)
 {
-    test_bootstrap_initializes_allocator_state();
-    test_bootstrap_is_one_shot_per_region_name();
-    test_open_existing_attaches_to_initialized_store();
-    test_open_existing_rejects_region_without_allocator_state();
-    return 0;
+    UNITY_BEGIN();
+    RUN_TEST(test_bootstrap_initializes_allocator_state);
+    RUN_TEST(test_bootstrap_is_one_shot_per_region_name);
+    RUN_TEST(test_open_existing_attaches_to_initialized_store);
+    RUN_TEST(test_open_existing_rejects_region_without_allocator_state);
+    return UNITY_END();
 }
