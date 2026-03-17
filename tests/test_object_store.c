@@ -157,6 +157,63 @@ static void test_object_rejects_invalid_offset(void)
 }
 
 /**
+ * @brief Verifies getter-style header and payload accessors agree on the same object.
+ */
+static void test_object_getters_are_consistent(void)
+{
+    char name[64];
+    ShmRegion region;
+    OffsetPtr object;
+    const ObjectHeader *const_header;
+    ObjectHeader *mutable_header;
+    const uint8_t *const_payload;
+    uint8_t *mutable_payload;
+
+    make_region_name(name, sizeof(name), "object-getters");
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    assert(object_store_alloc(&region, 17, 40, &object) == OFFSET_STORE_STATUS_OK);
+
+    const_header = object_store_get_header(&region, object);
+    mutable_header = object_store_get_header_mut(&region, object);
+    const_payload = (const uint8_t *) object_store_get_payload_const(&region, object);
+    mutable_payload = (uint8_t *) object_store_get_payload(&region, object);
+
+    assert(const_header != NULL);
+    assert(mutable_header != NULL);
+    assert(const_payload != NULL);
+    assert(mutable_payload != NULL);
+    assert((const void *) const_header == (const void *) mutable_header);
+    assert((const void *) const_payload == (const void *) mutable_payload);
+    assert((const unsigned char *) const_payload == ((const unsigned char *) const_header + sizeof(ObjectHeader)));
+
+    mutable_header->flags = 0x12345678u;
+    mutable_payload[0] = 0x5c;
+    assert(const_header->flags == 0x12345678u);
+    assert(const_payload[0] == 0x5c);
+
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+}
+
+/**
+ * @brief Verifies object getter-style accessors reject invalid arguments consistently.
+ */
+static void test_object_getters_reject_invalid_arguments(void)
+{
+    OffsetPtr null_object;
+
+    null_object.offset = 0;
+
+    assert(object_store_get_header(NULL, null_object) == NULL);
+    assert(object_store_get_header_mut(NULL, null_object) == NULL);
+    assert(object_store_get_payload_const(NULL, null_object) == NULL);
+    assert(object_store_get_payload(NULL, null_object) == NULL);
+}
+
+/**
  * @brief Runs the object-store unit tests.
  *
  * @return Zero on success.
@@ -168,5 +225,7 @@ int main(void)
     test_object_offset_is_stable_across_attach();
     test_object_free_releases_storage();
     test_object_rejects_invalid_offset();
+    test_object_getters_are_consistent();
+    test_object_getters_reject_invalid_arguments();
     return 0;
 }

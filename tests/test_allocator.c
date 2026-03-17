@@ -207,6 +207,73 @@ static void test_allocator_rejects_invalid_alignment(void)
 }
 
 /**
+ * @brief Verifies allocator getter contracts on a live allocation.
+ */
+static void test_allocator_getters_report_consistent_state(void)
+{
+    char name[64];
+    ShmRegion region;
+    void *allocation;
+    OffsetPtr free_list_head;
+    uint64_t heap_offset;
+    uint64_t heap_size;
+    size_t allocation_span;
+
+    make_region_name(name, sizeof(name), "alloc-getters");
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_alloc(&region, 96, 16, &allocation) == OFFSET_STORE_STATUS_OK);
+
+    assert(allocator_get_heap_offset(&region, &heap_offset) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_heap_size(&region, &heap_size) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_free_list_head(&region, &free_list_head) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_get_allocation_span(&region, allocation, &allocation_span) == OFFSET_STORE_STATUS_OK);
+    assert(heap_offset >= shm_region_header_size());
+    assert(heap_size > 0);
+    assert(allocation_span >= 96);
+    assert(free_list_head.offset == 0 || free_list_head.offset >= heap_offset);
+
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+}
+
+/**
+ * @brief Verifies allocator getter contracts on invalid input and unknown pointers.
+ */
+static void test_allocator_getters_reject_invalid_arguments(void)
+{
+    char name[64];
+    ShmRegion region;
+    uint64_t heap_value;
+    OffsetPtr head_value;
+    size_t allocation_span;
+    unsigned char stack_byte;
+
+    make_region_name(name, sizeof(name), "alloc-getters-invalid");
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    assert(allocator_get_heap_offset(NULL, &heap_value) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(allocator_get_heap_size(NULL, &heap_value) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(allocator_get_free_list_head(NULL, &head_value) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(allocator_get_allocation_span(NULL, &stack_byte, &allocation_span) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    assert(allocator_init(&region) == OFFSET_STORE_STATUS_OK);
+
+    assert(allocator_get_heap_offset(&region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(allocator_get_heap_size(&region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(allocator_get_free_list_head(&region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(allocator_get_allocation_span(&region, NULL, &allocation_span) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(allocator_get_allocation_span(&region, &stack_byte, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(allocator_get_allocation_span(&region, &stack_byte, &allocation_span) == OFFSET_STORE_STATUS_NOT_FOUND);
+
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+}
+
+/**
  * @brief Runs the allocator unit tests.
  *
  * @return Zero on success.
@@ -220,5 +287,7 @@ int main(void)
     test_allocator_rejects_double_free();
     test_allocator_state_is_visible_after_attach();
     test_allocator_rejects_invalid_alignment();
+    test_allocator_getters_report_consistent_state();
+    test_allocator_getters_reject_invalid_arguments();
     return 0;
 }

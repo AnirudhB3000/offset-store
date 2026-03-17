@@ -225,6 +225,27 @@ static void test_const_data_accessor(void)
 }
 
 /**
+ * @brief Verifies getter and accessor status contracts on invalid input.
+ */
+static void test_region_getters_reject_invalid_arguments(void)
+{
+    ShmRegion zero_region = {0};
+    uint32_t version;
+    uint64_t total_size;
+
+    assert(shm_region_get_version(NULL, &version) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(shm_region_get_version(&zero_region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(shm_region_get_total_size(NULL, &total_size) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(shm_region_get_total_size(&zero_region, NULL) == OFFSET_STORE_STATUS_INVALID_ARGUMENT);
+    assert(shm_region_data(NULL) == NULL);
+    assert(shm_region_data_const(NULL) == NULL);
+    assert(shm_region_data(&zero_region) == NULL);
+    assert(shm_region_data_const(&zero_region) == NULL);
+    assert(shm_region_usable_size(NULL) == 0);
+    assert(shm_region_usable_size(&zero_region) == 0);
+}
+
+/**
  * @brief Runs the shared-region unit tests.
  *
  * @return Zero on success.
@@ -237,5 +258,6 @@ int main(void)
     test_create_rejects_too_small_region();
     test_process_shared_mutex_coordinates_access();
     test_const_data_accessor();
+    test_region_getters_reject_invalid_arguments();
     return 0;
 }

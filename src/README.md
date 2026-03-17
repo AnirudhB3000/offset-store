@@ -181,6 +181,11 @@ functions do not currently lock. They assume callers either tolerate a
 best-effort snapshot or arrange higher-level synchronization when concurrent
 mutation matters.
 
+The same rule extends to object-store accessors. Functions such as
+`object_store_get_header(...)`, `object_store_get_header_mut(...)`,
+`object_store_get_payload_const(...)`, and `object_store_get_payload(...)`
+perform validation but do not acquire the region mutex themselves.
+
 ## `object_store.c`
 
 `object_store.c` layers a stable object format on top of allocator allocations.
@@ -253,6 +258,9 @@ That means the current consistency model is simple but limited:
 - allocation and free are serialized by the region mutex
 - object reads are only as stable as the caller's external synchronization
 - concurrent mutation of an object's payload is a caller-level concern today
+- concurrent allocator mutation or object free can invalidate a previously
+  resolved process-local pointer if the caller does not hold external
+  synchronization
 
 ## `store.c`
 
@@ -264,6 +272,9 @@ That means the current consistency model is simple but limited:
 
 `OffsetStore` is process-local convenience state, not a shared-memory structure.
 It exists to reduce boilerplate in examples and common lifecycle code.
+
+For recommended caller-side sequencing and error-handling patterns, see the
+`API Usage` section in [`README.md`](/home/aniru/offset-store/README.md).
 
 ## Current Limits
 

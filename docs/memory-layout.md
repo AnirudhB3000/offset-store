@@ -4,6 +4,22 @@ This document describes the current `v0.1.1` shared-memory layout implemented in
 the repository. It focuses on the actual bytes stored in the shared region rather
 than the process-local helper structures used to access them.
 
+Interpret the structure snippets in this document as layout documentation first.
+Some of the types shown here are public API types with stable exposed layouts,
+while others are private implementation structs that remain intentionally hidden
+from the public headers.
+
+Public versus private boundary:
+
+- public shared-memory value types: `OffsetPtr`, `ObjectHeader`
+- public process-local descriptors: `ShmRegion`, `OffsetStore`
+- private shared-memory layout structs: `ShmRegionHeader`, `AllocatorHeader`,
+  `AllocatorBlockHeader`, `AllocationPrefix`
+
+Only the shared-memory value types are intended to be embedded in allocator-owned
+objects. Process-local descriptors and private implementation structs are not
+part of the stable caller-facing data model.
+
 ## Region Overview
 
 The mapped shared-memory region is divided into three major areas:
@@ -61,7 +77,16 @@ Failure notes:
 
 The allocator stores an internal header immediately after `ShmRegionHeader`:
 
-Its layout currently contains:
+```c
+typedef struct {
+    uint64_t magic;
+    uint32_t version;
+    uint32_t reserved;
+    uint64_t heap_offset;
+    uint64_t heap_size;
+    OffsetPtr free_list_head;
+} AllocatorHeader;
+```
 
 Fields:
 
@@ -188,6 +213,16 @@ The same separation applies across the public headers:
 - private shared-memory layout structs remain implementation details of the
   corresponding `.c` files
 
+Practical rule:
+
+- persist `OffsetPtr` values, object payload bytes, and any higher-level structs
+  composed from stable shared-memory value types
+- do not persist resolved raw pointers returned by accessors
+- do not persist `ShmRegion`, `OffsetStore`, or any private header/block struct
+
+For caller-side sequencing and error handling, see the `API Usage` section in
+[`README.md`](/home/aniru/offset-store/README.md).
+
 ## Current Locking Scope
 
 The current mutex scope is coarse-grained:
@@ -196,5 +231,20 @@ The current mutex scope is coarse-grained:
 - `allocator_alloc`
 - `allocator_free`
 
-This keeps the design simple for `v0.1.1`. Future versions may replace it with a
-more granular design once the object graph and indexing layers exist.
+The following public APIs do not lock internally:
+
+- `allocator_validate(...)`
+- allocator metadata query helpers
+- `object_store_get_header(...)`
+- `object_store_get_header_mut(...)`
+- `object_store_get_payload_const(...)`
+- `object_store_get_payload(...)`
+- `shm_region` metadata/query helpers other than `shm_region_lock(...)` and
+  `shm_region_unlock(...)`
+
+That means callers must arrange external synchronization if they need a stable
+view while another process might allocate, free, or mutate shared objects.
+
+This keeps the design simple for the current implementation. Future versions may
+replace it with a more granular design once the object graph and indexing layers
+exist.

@@ -25,6 +25,9 @@ allocator and object-store internals, see
 Code documentation now follows a Doxygen-style convention for public headers,
 implementation helpers, tests, and examples.
 
+The polished getter/accessor APIs now also have explicit regression coverage in
+the unit tests so naming and contract behavior stay stable during future cleanup.
+
 At the time of writing, the repository contains project instructions, top-level
 documentation, initial repository scaffolding, and the first implemented modules:
 `offset_ptr`, `shm_region`, `allocator`, `object_store`, and the higher-level
@@ -124,6 +127,10 @@ Public type boundary:
   shared-memory-resident layouts
 - private shared-memory layout structs such as `ShmRegionHeader` and
   `AllocatorHeader` remain intentionally hidden in `.c` files
+
+The corresponding byte-level layout notes, including which documented structs are
+public versus private implementation details, are in
+[`docs/memory-layout.md`](/home/aniru/offset-store/docs/memory-layout.md).
 
 ## Offset Pointer Model
 
@@ -316,6 +323,54 @@ Current accessor naming direction:
 - read-only region data access now uses `shm_region_data_const(...)` while
   mutable access continues through `shm_region_data(...)`
 
+## API Usage
+
+Recommended high-level create flow:
+
+1. Call `offset_store_bootstrap(...)` to create, map, and initialize a store.
+2. Check the returned `OffsetStoreStatus`.
+3. Use `store.region` with allocator or object-store APIs.
+4. Call `offset_store_close(...)` when the process is done with the mapping.
+
+Recommended high-level attach flow:
+
+1. Call `offset_store_open_existing(...)` to attach to an existing store.
+2. Check the returned `OffsetStoreStatus`.
+3. Resolve and use shared objects through their `OffsetPtr` handles.
+4. Call `offset_store_close(...)` when finished.
+
+Recommended low-level create flow:
+
+1. Call `shm_region_create(...)`.
+2. Call `allocator_init(...)` exactly once for the new region.
+3. Use `object_store_alloc(...)` or `allocator_alloc(...)` for shared storage.
+4. Call `shm_region_close(...)` when done.
+5. Call `shm_region_unlink(...)` when the shared-memory object should be removed.
+
+Recommended object access flow:
+
+1. Keep object references as `OffsetPtr` values.
+2. Resolve headers with `object_store_get_header(...)` or `object_store_get_header_mut(...)`.
+3. Resolve payloads with `object_store_get_payload_const(...)` or `object_store_get_payload(...)`.
+4. Treat returned raw pointers as process-local and transient.
+5. Free objects with `object_store_free(...)` when they are no longer needed.
+
+Recommended error-handling pattern:
+
+- check every `OffsetStoreStatus` return before continuing
+- convert failures to readable text with `offset_store_status_string(...)`
+- treat `OFFSET_STORE_STATUS_ALREADY_EXISTS` as a normal duplicate-create case
+- treat `OFFSET_STORE_STATUS_NOT_FOUND` as a normal missing-object or missing-region case
+- treat `NULL` from pointer-returning accessors as resolution failure and avoid dereferencing
+- close any successfully opened region/store descriptor on the error path before returning
+
+Recommended synchronization pattern:
+
+- rely on allocator/object allocation and free paths for internal mutation locking
+- take the region mutex explicitly when a caller needs a stable multi-step read or write sequence
+- avoid keeping resolved raw pointers across calls that may free or remap the underlying object
+- prefer re-resolving from `OffsetPtr` after synchronization is re-established
+
 Potential future header fields:
 
 - flags
@@ -364,6 +419,30 @@ Current implemented synchronization behavior:
   take the region mutex before touching shared allocator metadata
 - the current lock scope is coarse-grained and protects allocator/shared-region
   mutation rather than individual structures
+
+Current internal-locking contract:
+
+- acquires the region mutex internally:
+  `allocator_init(...)`, `allocator_alloc(...)`, `allocator_free(...)`
+- does not acquire the region mutex internally:
+  `allocator_validate(...)`, allocator metadata query helpers,
+  `object_store_get_header(...)`, `object_store_get_header_mut(...)`,
+  `object_store_get_payload_const(...)`, `object_store_get_payload(...)`,
+  and the `shm_region` metadata/query helpers other than explicit
+  `shm_region_lock(...)` and `shm_region_unlock(...)`
+- callers that need a stable read view during concurrent mutation must provide
+  external synchronization themselves, typically by taking the region mutex
+
+Current consistency model for reads during concurrent mutation:
+
+- object allocation and object free are serialized because they flow through the
+  allocator mutation path
+- object/header/payload accessors validate bounds and allocator ownership, but
+  they do not provide snapshot isolation
+- concurrent payload mutation by one process may be observed directly by another
+  process performing unsynchronized reads
+- concurrent object free or allocator mutation can invalidate a previously
+  resolved process-local pointer unless the caller holds external synchronization
 
 ## Required Invariants
 
