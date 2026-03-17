@@ -492,23 +492,6 @@ on structure sizes and alignment.
 Multiple processes may allocate, free, or mutate objects concurrently. Shared state
 therefore requires explicit synchronization that is safe across process boundaries.
 
-Initial synchronization mechanism:
-
-- `pthread_mutex` configured as process-shared
-
-Likely scope for the initial lock:
-
-- allocator mutation
-- shared metadata updates
-- object index or registry mutation if added later
-
-Possible future refinements:
-
-- finer-grained locking
-- sharded allocators
-- read/write locking
-- lock-free data structures
-- targeted atomic protocols
 
 Synchronization design rules:
 
@@ -619,51 +602,12 @@ Examples of checks worth adding:
 - verify that object header sizes are aligned and in-range
 - verify that synchronization objects were initialized correctly
 
-## Planned Repository Structure
-
-The design documents the following intended structure:
-
-```text
-/src
-    shm_region.c
-    allocator.c
-    offset_ptr.c
-    object_store.c
-
-/include
-    shm_region.h
-    allocator.h
-    offset_ptr.h
-
-/examples
-    producer.c
-    consumer.c
-
-/tests
-    allocator_tests.c
-```
-
-Current repository status:
-
-- `AGENTS.md` exists and defines project constraints and workflow instructions
-- `include/`, `src/`, `tests/`, `examples/`, `docs/`, and `build/` now exist as the
-  initial scaffold
-- `offset_ptr`, `shm_region`, `allocator`, and `object_store` have been implemented
-  with tests
-- the remaining implementation files listed above are not yet present
-
-As code is added, this README should be updated to reflect the actual structure rather
-than only the intended one.
 
 ## Module Responsibilities
 
 The intended responsibilities of the planned modules are:
 
 ### `shm_region`
-
-Current status:
-
-- implemented
 
 Current responsibilities:
 
@@ -679,10 +623,6 @@ Key constraint:
 
 ### `offset_ptr`
 
-Current status:
-
-- implemented
-
 Current responsibilities:
 
 - define the shared offset pointer type
@@ -696,9 +636,6 @@ Key constraint:
 
 ### `allocator`
 
-Current status:
-
-- implemented
 
 Current responsibilities:
 
@@ -713,9 +650,6 @@ Key constraint:
 
 ### `object_store`
 
-Current status:
-
-- implemented
 
 Current responsibilities:
 
@@ -824,97 +758,3 @@ Each of these would require revisiting:
 - synchronization strategy
 - recovery semantics
 - testing strategy
-
-## Current State
-
-The repository is currently in a design-definition stage.
-The `offset_ptr`, `shm_region`, `allocator`, and `object_store` modules are
-implemented; the rest of the system remains in the design and scaffolding stage.
-
-Present top-level files and directories:
-
-- `AGENTS.md`
-- `LICENSE.txt`
-- `Makefile`
-- `README.md`
-- `TODO.md`
-- `build/`
-- `docs/`
-- `examples/`
-- `include/`
-- `src/`
-- `tests/`
-
-Implemented files:
-
-- `include/offset_store/offset_store.h`
-- `include/offset_store/offset_ptr.h`
-- `include/offset_store/allocator.h`
-- `include/offset_store/object_store.h`
-- `include/offset_store/shm_region.h`
-- `include/offset_store/store.h`
-- `src/allocator.c`
-- `src/offset_store.c`
-- `src/object_store.c`
-- `src/offset_ptr.c`
-- `src/shm_region.c`
-- `src/store.c`
-- `tests/test_allocator.c`
-- `tests/test_offset_store.c`
-- `tests/test_object_store.c`
-- `tests/test_offset_ptr.c`
-- `tests/test_shm_region.c`
-- `tests/test_store.c`
-- `docs/memory-layout.md`
-- `examples/consumer.c`
-- `examples/producer.c`
-
-Absent today but expected later:
-
-- most implementation sources
-- most headers
-- additional tests
-- example programs
-
-That means this README is intentionally architecture-heavy. As implementation lands, it
-should evolve from a design document into a combined design and usage document grounded
-in the actual codebase.
-
-## Current Testing
-
-The repository now includes a first unit test:
-
-- `tests/test_offset_ptr.c`
-- `tests/test_allocator.c`
-- `tests/test_offset_store.c`
-- `tests/test_object_store.c`
-- `tests/test_shm_region.c`
-- `tests/test_store.c`
-
-The current `Makefile` builds all test files under `tests/` and links them against the
-current sources under `src/`, together with the vendored Unity framework under
-`third_party/unity/`. Running `make test` executes every produced test binary.
-Each test remains a standalone executable, but assertion reporting now comes from
-Unity rather than raw C `assert(...)`. After the per-binary Unity output, `make test`
-also prints a suite-level summary of how many tests ran, passed, failed, and were
-ignored.
-The shared-memory test suite includes a fork-based check that verifies the region mutex
-coordinates access across processes.
-The same `Makefile` also builds the example binaries under `build/`.
-
-## Contribution Expectation
-
-Changes should be incremental, explicit, and easy to review.
-
-A good change in this repository should:
-
-- preserve the core invariants
-- explain its impact on layout and concurrency
-- avoid hidden process-local assumptions
-- update documentation when behavior or structure changes
-
-For any new shared structure, document at minimum:
-
-- memory layout
-- synchronization strategy
-- failure behavior
