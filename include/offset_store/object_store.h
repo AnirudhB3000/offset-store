@@ -10,6 +10,14 @@
 #include <stdint.h>
 
 /**
+ * @name Shared-Memory Resident Value Types
+ *
+ * These types have stable layouts and are safe to place inside allocator-owned
+ * shared-memory storage.
+ */
+/**@{*/
+
+/**
  * @brief Fixed header stored at the front of every object allocation.
  *
  * Objects begin with a fixed-size header so the payload can follow immediately
@@ -25,6 +33,8 @@ typedef struct {
     /** Reserved field for future expansion. */
     uint32_t reserved;
 } ObjectHeader;
+
+/**@}*/
 
 /**
  * @brief Allocates a new object and returns its shared offset handle.
@@ -48,6 +58,9 @@ OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object);
 /**
  * @brief Resolves an object handle to a read-only header pointer.
  *
+ * The returned pointer is process-local and must not be stored back into shared
+ * memory. Persist the original `OffsetPtr` instead.
+ *
  * @param region Region whose mapping contains the object.
  * @param object Offset handle to the object header.
  * @return Read-only header pointer on success, or `NULL` on failure.
@@ -55,6 +68,9 @@ OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object);
 const ObjectHeader *object_store_get_header(const ShmRegion *region, OffsetPtr object);
 /**
  * @brief Resolves an object handle to a mutable header pointer.
+ *
+ * The returned pointer is process-local and must not be stored back into shared
+ * memory. Persist the original `OffsetPtr` instead.
  *
  * @param region Region whose mapping contains the object.
  * @param object Offset handle to the object header.
@@ -64,6 +80,9 @@ ObjectHeader *object_store_get_header_mut(ShmRegion *region, OffsetPtr object);
 /**
  * @brief Resolves an object handle to a read-only payload pointer.
  *
+ * The returned pointer is process-local and must not be stored back into shared
+ * memory. Persist the original `OffsetPtr` instead.
+ *
  * @param region Region whose mapping contains the object.
  * @param object Offset handle to the object header.
  * @return Read-only payload pointer on success, or `NULL` on failure.
@@ -71,6 +90,9 @@ ObjectHeader *object_store_get_header_mut(ShmRegion *region, OffsetPtr object);
 const void *object_store_get_payload_const(const ShmRegion *region, OffsetPtr object);
 /**
  * @brief Resolves an object handle to a mutable payload pointer.
+ *
+ * The returned pointer is process-local and must not be stored back into shared
+ * memory. Persist the original `OffsetPtr` instead.
  *
  * @param region Region whose mapping contains the object.
  * @param object Offset handle to the object header.

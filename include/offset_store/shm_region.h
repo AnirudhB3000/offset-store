@@ -9,6 +9,15 @@
 #include <stdint.h>
 
 /**
+ * @name Process-Local Descriptors
+ *
+ * These types describe one process's view of a shared-memory mapping. They are
+ * never safe to store inside the shared region itself because they include
+ * process-local resources such as file descriptors and virtual addresses.
+ */
+/**@{*/
+
+/**
  * @brief Process-local descriptor for one shared-memory mapping.
  *
  * This descriptor tracks the file descriptor and mapping details for a shared
@@ -24,6 +33,8 @@ typedef struct {
     /** Whether this process created the region rather than attaching to it. */
     bool creator;
 } ShmRegion;
+
+/**@}*/
 
 /**
  * @brief Public region layout version stored in the shared header.
@@ -103,10 +114,23 @@ OffsetStoreStatus shm_region_get_version(const ShmRegion *region, uint32_t *out_
 /**
  * @brief Returns the first byte after the private shared region header.
  *
+ * The returned pointer is process-local and must not be stored inside
+ * shared-memory-resident metadata.
+ *
  * @param region Region descriptor to inspect.
  * @return Pointer to the usable data portion of the mapping, or `NULL` on failure.
  */
 void *shm_region_data(const ShmRegion *region);
+/**
+ * @brief Returns a read-only pointer to the first byte after the private shared region header.
+ *
+ * The returned pointer is process-local and must not be stored inside
+ * shared-memory-resident metadata.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Const pointer to the usable data portion of the mapping, or `NULL` on failure.
+ */
+const void *shm_region_data_const(const ShmRegion *region);
 /**
  * @brief Returns the number of usable bytes after the private shared header.
  *

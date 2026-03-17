@@ -43,6 +43,8 @@ Important points:
   coarse-grained synchronization primitive for allocator mutation
 - attach paths validate `magic`, `version`, and `total_size` before the region
   is considered usable
+- callers now have both `shm_region_data(...)` and `shm_region_data_const(...)`
+  so read-only access does not require casting away const intent
 
 This module deliberately keeps the shared header typedef private so callers
 cannot accidentally depend on its binary layout in public code.

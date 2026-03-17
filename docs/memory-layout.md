@@ -1,6 +1,6 @@
 # Memory Layout
 
-This document describes the current `v0.1.0` shared-memory layout implemented in
+This document describes the current `v0.1.1` shared-memory layout implemented in
 the repository. It focuses on the actual bytes stored in the shared region rather
 than the process-local helper structures used to access them.
 
@@ -179,6 +179,15 @@ instead of returning a typed pointer to the shared header. That keeps shared
 layout details documented here without making them part of the stable public C
 surface.
 
+The same separation applies across the public headers:
+
+- process-local descriptors such as `ShmRegion` and `OffsetStore` are not part
+  of the shared-memory layout
+- shared-memory-resident value types such as `OffsetPtr` and `ObjectHeader` are
+  safe to persist in allocator-owned storage
+- private shared-memory layout structs remain implementation details of the
+  corresponding `.c` files
+
 ## Current Locking Scope
 
 The current mutex scope is coarse-grained:
@@ -187,5 +196,5 @@ The current mutex scope is coarse-grained:
 - `allocator_alloc`
 - `allocator_free`
 
-This keeps the design simple for `v0.1.0`. Future versions may replace it with a
+This keeps the design simple for `v0.1.1`. Future versions may replace it with a
 more granular design once the object graph and indexing layers exist.

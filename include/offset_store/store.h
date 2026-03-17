@@ -7,6 +7,14 @@
 #include <stddef.h>
 
 /**
+ * @name Process-Local Descriptors
+ *
+ * These wrappers exist only inside one process. They coordinate access to a
+ * shared region but are not themselves part of the shared-memory layout.
+ */
+/**@{*/
+
+/**
  * @brief Process-local convenience wrapper for common store lifecycle flows.
  *
  * `OffsetStore` is a convenience wrapper for the common lifecycle path: create
@@ -17,6 +25,8 @@ typedef struct {
     /** Process-local shared region descriptor. */
     ShmRegion region;
 } OffsetStore;
+
+/**@}*/
 
 /**
  * @brief Creates a region and initializes allocator state for first use.

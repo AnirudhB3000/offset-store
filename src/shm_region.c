@@ -453,12 +453,23 @@ OffsetStoreStatus shm_region_get_version(const ShmRegion *region, uint32_t *out_
  */
 void *shm_region_data(const ShmRegion *region)
 {
+    return (void *) shm_region_data_const(region);
+}
+
+/**
+ * @brief Returns the first usable byte after the private region header for read-only callers.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Const pointer to usable region data, or `NULL` on failure.
+ */
+const void *shm_region_data_const(const ShmRegion *region)
+{
     if (region == NULL || region->base == NULL || region->size < sizeof(ShmRegionHeader)) {
         return NULL;
     }
 
     /* Callers place allocator metadata and objects after the fixed header. */
-    return (void *) ((unsigned char *) region->base + sizeof(ShmRegionHeader));
+    return (const void *) ((const unsigned char *) region->base + sizeof(ShmRegionHeader));
 }
 
 /**

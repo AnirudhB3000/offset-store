@@ -6,6 +6,15 @@
 #include <stdint.h>
 
 /**
+ * @name Shared-Memory Resident Value Types
+ *
+ * These types are safe to embed inside shared-memory-resident metadata because
+ * they are defined in terms of offsets or fixed-width scalar fields rather than
+ * process-local addresses.
+ */
+/**@{*/
+
+/**
  * @brief Address-independent shared-memory reference.
  *
  * Shared-memory references are stored as offsets from the region base so the
@@ -101,5 +110,7 @@ bool offset_ptr_try_resolve_const(
  * @return false otherwise.
  */
 bool offset_ptr_is_in_bounds(size_t region_size, OffsetPtr ptr, size_t span);
+
+/**@}*/
 
 #endif

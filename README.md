@@ -27,17 +27,10 @@ implementation helpers, tests, and examples.
 
 At the time of writing, the repository contains project instructions, top-level
 documentation, initial repository scaffolding, and the first implemented modules:
-`offset_ptr`, `shm_region`, `allocator`, and `object_store`. This README documents
-both the intended architecture and the concrete APIs that now exist so
-implementation work can stay aligned with a consistent model.
-
-The initial `v0.1.0` scope is implemented. The next planned iteration, `v0.1.1`, is
-focused on API polish: public status/error reporting, header cleanup, lifecycle
-ergonomics, and clearer concurrency contracts.
-
-The current `v0.1.1` work now includes a higher-level lifecycle wrapper:
-`OffsetStore`, with `offset_store_bootstrap(...)`, `offset_store_open_existing(...)`,
-and `offset_store_close(...)`.
+`offset_ptr`, `shm_region`, `allocator`, `object_store`, and the higher-level
+`OffsetStore` lifecycle wrapper. This README documents both the intended
+architecture and the concrete APIs that now exist so implementation work can
+stay aligned with a consistent model.
 
 ## Design Goals
 
@@ -111,7 +104,7 @@ Conceptual layout:
 +------------------------------+
 ```
 
-The exact layout should remain deterministic and versionable.
+The exact layout should remain deterministic.
 
 Current implemented `shm_region` responsibilities:
 
@@ -122,6 +115,15 @@ Current implemented `shm_region` responsibilities:
 - expose region metadata through narrow query helpers plus data start and usable
   payload size
 - close mappings and unlink shared memory objects
+
+Public type boundary:
+
+- `ShmRegion` and `OffsetStore` are process-local descriptors and must never be
+  embedded in shared-memory-resident structures
+- `OffsetPtr` and `ObjectHeader` are stable value types intended for
+  shared-memory-resident layouts
+- private shared-memory layout structs such as `ShmRegionHeader` and
+  `AllocatorHeader` remain intentionally hidden in `.c` files
 
 ## Offset Pointer Model
 
@@ -311,10 +313,11 @@ Current accessor naming direction:
   and `object_store_get_payload(...)`
 - mutable object accessors use the explicit `_mut` suffix via
   `object_store_get_header_mut(...)`
+- read-only region data access now uses `shm_region_data_const(...)` while
+  mutable access continues through `shm_region_data(...)`
 
 Potential future header fields:
 
-- version
 - flags
 - checksum or canary
 - generation or epoch markers

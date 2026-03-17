@@ -203,9 +203,9 @@ Possible failures include:
 * memory corruption
 * inconsistent allocator state
 
-Initial version assumes cooperative processes.
+The initial implementation assumes cooperative processes.
 
-Later versions may implement:
+Later work may implement:
 
 * allocator journaling
 * recovery scans
@@ -248,7 +248,7 @@ When modifying the code:
 9. All code files must have sufficient inline comments explaining logic
 10. All code blocks, including functions, structs, enums, typedefs, and macros, must have sufficient inline documentation using Doxygen-style comments
 11. Update `TODO.md` as work progresses so completed and remaining tasks stay accurate
-12. Do not add future-version tasks, roadmap items, or scope changes unless explicitly requested by the user
+12. Do not add future tasks, roadmap items, or scope changes unless explicitly requested by the user
 13. Any user updates made without explicit instruction to modify or remove them must be respected and not reversed
 14. If the user removes content from any file, treat that removal as intentional and do not restore or recreate the removed content unless explicitly asked
 

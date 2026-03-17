@@ -1,6 +1,7 @@
 CC := cc
 CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -Iinclude -pthread
 LDFLAGS := -pthread
+VERSION := 1.0.0
 
 BUILD_DIR := build
 SRC_SOURCES := $(wildcard src/*.c)

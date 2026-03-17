@@ -69,7 +69,7 @@ static void test_open_observes_existing_mapping(void)
     ShmRegion creator_region;
     ShmRegion attached_region;
     uint8_t *creator_data;
-    uint8_t *attached_data;
+    const uint8_t *attached_data;
 
     make_region_name(name, sizeof(name), "attach");
     assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
@@ -82,7 +82,7 @@ static void test_open_observes_existing_mapping(void)
 
     assert(shm_region_open(&attached_region, name) == OFFSET_STORE_STATUS_OK);
     assert(!attached_region.creator);
-    attached_data = (uint8_t *) shm_region_data(&attached_region);
+    attached_data = (const uint8_t *) shm_region_data_const(&attached_region);
     assert(attached_data != NULL);
     assert(attached_data[0] == 0x5a);
     assert(attached_data[1] == 0xa5);
@@ -201,6 +201,30 @@ static void test_process_shared_mutex_coordinates_access(void)
 }
 
 /**
+ * @brief Verifies that the const-qualified data accessor returns the same usable address.
+ */
+static void test_const_data_accessor(void)
+{
+    char name[64];
+    ShmRegion region;
+    void *mutable_data;
+    const void *const_data;
+
+    make_region_name(name, sizeof(name), "data-const");
+    assert(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    assert(shm_region_create(&region, name, 4096) == OFFSET_STORE_STATUS_OK);
+    mutable_data = shm_region_data(&region);
+    const_data = shm_region_data_const(&region);
+    assert(mutable_data != NULL);
+    assert(const_data != NULL);
+    assert(const_data == mutable_data);
+
+    assert(shm_region_close(&region) == OFFSET_STORE_STATUS_OK);
+    assert(shm_region_unlink(name) == OFFSET_STORE_STATUS_OK);
+}
+
+/**
  * @brief Runs the shared-region unit tests.
  *
  * @return Zero on success.
@@ -212,5 +236,6 @@ int main(void)
     test_open_rejects_invalid_header();
     test_create_rejects_too_small_region();
     test_process_shared_mutex_coordinates_access();
+    test_const_data_accessor();
     return 0;
 }
