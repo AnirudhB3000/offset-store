@@ -331,6 +331,65 @@ static bool allocator_block_is_in_heap(const AllocatorHeader *header, OffsetPtr 
 }
 
 /**
+ * @brief Returns a snapshot of allocator usage and free-space statistics.
+ *
+ * @param region Region descriptor whose allocator should be inspected.
+ * @param[out] out_stats Statistics snapshot on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus allocator_get_stats(const ShmRegion *region, AllocatorStats *out_stats)
+{
+    const AllocatorHeader *header;
+    size_t traversed;
+
+    if (region == NULL || out_stats == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = allocator_header(region);
+    if (!allocator_header_valid(region, header)) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    out_stats->heap_size = header->heap_size;
+    out_stats->free_bytes = 0;
+    out_stats->used_bytes = 0;
+    out_stats->largest_free_block = 0;
+    out_stats->free_block_count = 0;
+
+    traversed = 0;
+    while (traversed < header->heap_size) {
+        OffsetPtr block_offset;
+        AllocatorBlockHeader *block;
+        uint64_t block_size;
+
+        block_offset.offset = header->heap_offset + traversed;
+        if (!allocator_block_from_offset(region, block_offset, &block)) {
+            return OFFSET_STORE_STATUS_INVALID_STATE;
+        }
+
+        block_size = block->size;
+        if (block_size == 0 || block_size > header->heap_size - traversed) {
+            return OFFSET_STORE_STATUS_INVALID_STATE;
+        }
+
+        if ((block->flags & OFFSET_STORE_ALLOCATOR_BLOCK_FREE) != 0u) {
+            out_stats->free_bytes += block_size;
+            out_stats->free_block_count += 1;
+            if (block_size > out_stats->largest_free_block) {
+                out_stats->largest_free_block = block_size;
+            }
+        } else {
+            out_stats->used_bytes += block_size;
+        }
+
+        traversed += (size_t) block_size;
+    }
+
+    return OFFSET_STORE_STATUS_OK;
+}
+
+/**
  * @brief Returns the usable span of a live allocation.
  *
  * @param region Region whose allocator owns the allocation.

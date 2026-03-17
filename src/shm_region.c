@@ -14,6 +14,23 @@
 static const uint64_t OFFSET_STORE_REGION_MAGIC = UINT64_C(0x4f464653544f5245);
 
 /**
+ * @brief Private fixed-size root table entry stored in the shared region header.
+ *
+ * Root names are stored inline so discovery remains deterministic and does not
+ * require allocator recursion during early attach flows.
+ */
+typedef struct {
+    /** Whether this entry currently stores a valid root binding. */
+    uint8_t in_use;
+    /** Reserved padding for future entry flags. */
+    uint8_t reserved[7];
+    /** Null-terminated root name stored inline in the shared header. */
+    char name[OFFSET_STORE_ROOT_NAME_LENGTH];
+    /** Offset handle associated with the root name. */
+    OffsetPtr object;
+} ShmRegionRootEntry;
+
+/**
  * @brief Private shared-memory header stored at offset zero in every region.
  *
  * Keeping this typedef private prevents callers from depending on binary layout
@@ -30,6 +47,8 @@ typedef struct {
     uint64_t total_size;
     /** Process-shared mutex protecting coarse-grained shared mutation. */
     pthread_mutex_t mutex;
+    /** Fixed-capacity root table for well-known shared objects. */
+    ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
 } ShmRegionHeader;
 
 /**
@@ -123,6 +142,29 @@ static bool shm_region_validate_header(const ShmRegion *region)
 }
 
 /**
+ * @brief Returns whether a candidate root name fits in the fixed root table.
+ *
+ * @param name Root name to validate.
+ * @return true if the name is non-empty and fits in the fixed inline buffer.
+ * @return false otherwise.
+ */
+static bool shm_region_is_root_name_valid(const char *name)
+{
+    size_t length;
+
+    if (name == NULL) {
+        return false;
+    }
+
+    length = strnlen(name, OFFSET_STORE_ROOT_NAME_LENGTH);
+    if (length == 0 || length >= OFFSET_STORE_ROOT_NAME_LENGTH) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * @brief Returns a const view of the private shared region header.
  *
  * @param region Region descriptor to inspect.
@@ -150,6 +192,95 @@ static ShmRegionHeader *shm_region_header_mut(ShmRegion *region)
     }
 
     return (ShmRegionHeader *) region->base;
+}
+
+/**
+ * @brief Returns the fixed root entry array stored in the private header.
+ *
+ * @param header Shared region header to inspect.
+ * @return Pointer to the first root entry, or `NULL` on failure.
+ */
+static ShmRegionRootEntry *shm_region_roots(ShmRegionHeader *header)
+{
+    if (header == NULL) {
+        return NULL;
+    }
+
+    return header->roots;
+}
+
+/**
+ * @brief Finds an existing root entry by name.
+ *
+ * @param header Shared region header to inspect.
+ * @param name Root name to search for.
+ * @return Matching root entry, or `NULL` if the name is absent.
+ */
+static ShmRegionRootEntry *shm_region_find_root(ShmRegionHeader *header, const char *name)
+{
+    size_t index;
+    ShmRegionRootEntry *roots;
+
+    if (header == NULL || name == NULL) {
+        return NULL;
+    }
+
+    roots = shm_region_roots(header);
+    for (index = 0; index < OFFSET_STORE_ROOT_CAPACITY; ++index) {
+        if (roots[index].in_use != 0 && strcmp(roots[index].name, name) == 0) {
+            return &roots[index];
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * @brief Finds the first unused root-table slot.
+ *
+ * @param header Shared region header to inspect.
+ * @return Unused root entry, or `NULL` if the table is full.
+ */
+static ShmRegionRootEntry *shm_region_find_free_root(ShmRegionHeader *header)
+{
+    size_t index;
+    ShmRegionRootEntry *roots;
+
+    if (header == NULL) {
+        return NULL;
+    }
+
+    roots = shm_region_roots(header);
+    for (index = 0; index < OFFSET_STORE_ROOT_CAPACITY; ++index) {
+        if (roots[index].in_use == 0) {
+            return &roots[index];
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * @brief Clears the fixed root table stored in a new shared region.
+ *
+ * @param header Shared region header to initialize.
+ */
+static void shm_region_init_roots(ShmRegionHeader *header)
+{
+    size_t index;
+    ShmRegionRootEntry *roots;
+
+    if (header == NULL) {
+        return;
+    }
+
+    roots = shm_region_roots(header);
+    for (index = 0; index < OFFSET_STORE_ROOT_CAPACITY; ++index) {
+        roots[index].in_use = 0;
+        memset(roots[index].reserved, 0, sizeof(roots[index].reserved));
+        memset(roots[index].name, 0, sizeof(roots[index].name));
+        roots[index].object = offset_ptr_null();
+    }
 }
 
 /**
@@ -234,6 +365,7 @@ OffsetStoreStatus shm_region_create(ShmRegion *out_region, const char *name, siz
     header->version = OFFSET_STORE_REGION_VERSION;
     header->reserved = 0;
     header->total_size = (uint64_t) out_region->size;
+    shm_region_init_roots(header);
     status = shm_region_init_mutex(header);
     if (status != OFFSET_STORE_STATUS_OK) {
         shm_region_close(out_region);
@@ -485,4 +617,130 @@ size_t shm_region_usable_size(const ShmRegion *region)
     }
 
     return region->size - sizeof(ShmRegionHeader);
+}
+
+/**
+ * @brief Stores or replaces a named root in the shared region header.
+ *
+ * @param region Region descriptor whose root table should be updated.
+ * @param name Root name to create or replace.
+ * @param object Object handle stored for the root.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_set_root(ShmRegion *region, const char *name, OffsetPtr object)
+{
+    OffsetStoreStatus status;
+    ShmRegionHeader *header;
+    ShmRegionRootEntry *entry;
+
+    if (region == NULL || !shm_region_is_root_name_valid(name) || offset_ptr_is_null(object)) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = shm_region_header_mut(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_lock(region);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    entry = shm_region_find_root(header, name);
+    if (entry == NULL) {
+        entry = shm_region_find_free_root(header);
+    }
+
+    if (entry == NULL) {
+        shm_region_unlock(region);
+        return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
+    }
+
+    entry->in_use = 1;
+    memset(entry->reserved, 0, sizeof(entry->reserved));
+    memset(entry->name, 0, sizeof(entry->name));
+    memcpy(entry->name, name, strlen(name));
+    entry->object = object;
+
+    return shm_region_unlock(region);
+}
+
+/**
+ * @brief Resolves a named root from the shared region header.
+ *
+ * @param region Region descriptor whose root table should be queried.
+ * @param name Root name to resolve.
+ * @param[out] out_object Stored root object handle on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_get_root(ShmRegion *region, const char *name, OffsetPtr *out_object)
+{
+    OffsetStoreStatus status;
+    const ShmRegionHeader *header;
+    const ShmRegionRootEntry *entry;
+
+    if (region == NULL || !shm_region_is_root_name_valid(name) || out_object == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = shm_region_header(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_lock(region);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    entry = shm_region_find_root((ShmRegionHeader *) header, name);
+    if (entry == NULL) {
+        shm_region_unlock(region);
+        return OFFSET_STORE_STATUS_NOT_FOUND;
+    }
+
+    *out_object = entry->object;
+    return shm_region_unlock(region);
+}
+
+/**
+ * @brief Removes a named root from the shared region header.
+ *
+ * @param region Region descriptor whose root table should be updated.
+ * @param name Root name to remove.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name)
+{
+    OffsetStoreStatus status;
+    ShmRegionHeader *header;
+    ShmRegionRootEntry *entry;
+
+    if (region == NULL || !shm_region_is_root_name_valid(name)) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = shm_region_header_mut(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_lock(region);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    entry = shm_region_find_root(header, name);
+    if (entry == NULL) {
+        shm_region_unlock(region);
+        return OFFSET_STORE_STATUS_NOT_FOUND;
+    }
+
+    entry->in_use = 0;
+    memset(entry->reserved, 0, sizeof(entry->reserved));
+    memset(entry->name, 0, sizeof(entry->name));
+    entry->object = offset_ptr_null();
+
+    return shm_region_unlock(region);
 }

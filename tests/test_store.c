@@ -1,8 +1,10 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "offset_store/object_store.h"
 #include "offset_store/store.h"
 
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "unity.h"
@@ -120,6 +122,131 @@ static void test_open_existing_rejects_region_without_allocator_state(void)
 }
 
 /**
+ * @brief Verifies that a named root can be stored, resolved, and removed.
+ */
+static void test_named_roots_round_trip(void)
+{
+    char name[64];
+    OffsetStore store;
+    OffsetPtr stored_object;
+    OffsetPtr resolved_object;
+
+    make_region_name(name, sizeof(name), "store-roots-roundtrip");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&store, name, 4096));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&store.region, 7, 32, &stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_set_root(&store, "message", stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_get_root(&store, "message", &resolved_object)
+    );
+    TEST_ASSERT_EQUAL_UINT64(stored_object.offset, resolved_object.offset);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_remove_root(&store, "message"));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_NOT_FOUND,
+        offset_store_get_root(&store, "message", &resolved_object)
+    );
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&store));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies that named roots are visible to later attached processes.
+ */
+static void test_open_existing_observes_named_roots(void)
+{
+    char name[64];
+    OffsetStore creator;
+    OffsetStore attached;
+    OffsetPtr stored_object;
+    OffsetPtr resolved_object;
+
+    make_region_name(name, sizeof(name), "store-roots-attach");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&creator, name, 4096));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&creator.region, 9, 48, &stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_set_root(&creator, "shared", stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_open_existing(&attached, name));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_get_root(&attached, "shared", &resolved_object)
+    );
+    TEST_ASSERT_EQUAL_UINT64(stored_object.offset, resolved_object.offset);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&attached));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&creator));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies that root creation replaces an existing name and validates inputs.
+ */
+static void test_named_roots_replace_existing_binding_and_validate_input(void)
+{
+    char name[64];
+    char too_long_name[OFFSET_STORE_ROOT_NAME_LENGTH + 4];
+    OffsetStore store;
+    OffsetPtr first_object;
+    OffsetPtr second_object;
+    OffsetPtr resolved_object;
+
+    memset(too_long_name, 'a', sizeof(too_long_name));
+    too_long_name[sizeof(too_long_name) - 1] = '\0';
+
+    make_region_name(name, sizeof(name), "store-roots-replace");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&store, name, 4096));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&store.region, 11, 16, &first_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&store.region, 12, 16, &second_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_set_root(&store, "replaceable", first_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_set_root(&store, "replaceable", second_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_get_root(&store, "replaceable", &resolved_object)
+    );
+    TEST_ASSERT_EQUAL_UINT64(second_object.offset, resolved_object.offset);
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_INVALID_ARGUMENT,
+        offset_store_set_root(&store, too_long_name, second_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_INVALID_ARGUMENT,
+        offset_store_set_root(&store, "null-object", offset_ptr_null())
+    );
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&store));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Runs the store lifecycle unit tests.
  *
  * @return Zero on success.
@@ -131,5 +258,8 @@ int main(void)
     RUN_TEST(test_bootstrap_is_one_shot_per_region_name);
     RUN_TEST(test_open_existing_attaches_to_initialized_store);
     RUN_TEST(test_open_existing_rejects_region_without_allocator_state);
+    RUN_TEST(test_named_roots_round_trip);
+    RUN_TEST(test_open_existing_observes_named_roots);
+    RUN_TEST(test_named_roots_replace_existing_binding_and_validate_input);
     return UNITY_END();
 }

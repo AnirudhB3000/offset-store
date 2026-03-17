@@ -95,3 +95,53 @@ OffsetStoreStatus offset_store_close(OffsetStore *store)
 
     return shm_region_close(&store->region);
 }
+
+/**
+ * @brief Stores or replaces a named root in the shared region.
+ *
+ * @param store Store descriptor whose root table should be updated.
+ * @param name Root name to create or replace.
+ * @param object Object handle to store.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_set_root(OffsetStore *store, const char *name, OffsetPtr object)
+{
+    if (store == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_set_root(&store->region, name, object);
+}
+
+/**
+ * @brief Resolves a named root from the shared region.
+ *
+ * @param store Store descriptor whose root table should be queried.
+ * @param name Root name to resolve.
+ * @param[out] out_object Stored object handle on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_get_root(OffsetStore *store, const char *name, OffsetPtr *out_object)
+{
+    if (store == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_get_root(&store->region, name, out_object);
+}
+
+/**
+ * @brief Removes a named root from the shared region.
+ *
+ * @param store Store descriptor whose root table should be updated.
+ * @param name Root name to remove.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_remove_root(OffsetStore *store, const char *name)
+{
+    if (store == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_remove_root(&store->region, name);
+}

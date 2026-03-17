@@ -49,6 +49,7 @@ typedef struct {
     uint32_t reserved;
     uint64_t total_size;
     pthread_mutex_t mutex;
+    ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
 } ShmRegionHeader;
 ```
 
@@ -59,6 +60,8 @@ Fields:
 - `reserved`: padding/reserved space for future use
 - `total_size`: full mapped region size in bytes
 - `mutex`: process-shared mutex protecting coarse-grained shared mutation
+- `roots`: fixed-capacity table of well-known object bindings stored as
+  inline names plus `OffsetPtr` handles
 
 Behavior:
 
@@ -66,12 +69,44 @@ Behavior:
 - validated by `shm_region_open`
 - used by allocator mutation paths through `shm_region_lock` and
   `shm_region_unlock`
+- stores named root bindings used by `offset_store_set_root(...)`,
+  `offset_store_get_root(...)`, and `offset_store_remove_root(...)`
 
 Failure notes:
 
 - if the header is corrupted, `shm_region_open` rejects the mapping
 - the mutex is process-shared but not yet configured as robust, so crash recovery
   is still a future concern
+- roots are not automatically invalidated when the pointed-to object is freed, so
+  callers must keep object lifetime and root bindings consistent
+
+### Root Entry Layout
+
+Each region root entry is kept private to `src/shm_region.c`, but the current
+layout is:
+
+```c
+typedef struct {
+    uint8_t in_use;
+    uint8_t reserved[7];
+    char name[OFFSET_STORE_ROOT_NAME_LENGTH];
+    OffsetPtr object;
+} ShmRegionRootEntry;
+```
+
+Fields:
+
+- `in_use`: entry occupancy flag
+- `reserved`: padding reserved for future root-entry flags
+- `name`: null-terminated fixed-size root name buffer
+- `object`: stored object handle
+
+Rules:
+
+- the table capacity is fixed at `OFFSET_STORE_ROOT_CAPACITY`
+- names must fit within `OFFSET_STORE_ROOT_NAME_LENGTH - 1` characters
+- empty names are rejected
+- lookups, replacements, and removals are mutex-protected
 
 ## Allocator Header
 

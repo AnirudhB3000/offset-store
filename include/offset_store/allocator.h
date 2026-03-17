@@ -20,6 +20,26 @@ enum {
 };
 
 /**
+ * @brief Snapshot of allocator usage and fragmentation state.
+ *
+ * The values in this struct are derived from a point-in-time walk of the heap
+ * and free blocks. They describe the allocator state visible during the call to
+ * `allocator_get_stats(...)`.
+ */
+typedef struct {
+    /** Total heap bytes managed by the allocator. */
+    uint64_t heap_size;
+    /** Total bytes currently held by free blocks. */
+    uint64_t free_bytes;
+    /** Total bytes currently consumed by live allocations and block overhead. */
+    uint64_t used_bytes;
+    /** Size in bytes of the largest free block. */
+    uint64_t largest_free_block;
+    /** Number of blocks currently on the free list. */
+    uint64_t free_block_count;
+} AllocatorStats;
+
+/**
  * @brief Initializes allocator metadata inside a mapped region.
  *
  * @param region Region whose allocator state should be initialized.
@@ -84,5 +104,13 @@ OffsetStoreStatus allocator_get_heap_size(const ShmRegion *region, uint64_t *out
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus allocator_get_free_list_head(const ShmRegion *region, OffsetPtr *out_head);
+/**
+ * @brief Returns a snapshot of allocator usage and fragmentation statistics.
+ *
+ * @param region Region descriptor whose allocator should be inspected.
+ * @param[out] out_stats Allocator statistics snapshot on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus allocator_get_stats(const ShmRegion *region, AllocatorStats *out_stats);
 
 #endif

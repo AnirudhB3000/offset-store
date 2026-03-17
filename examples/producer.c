@@ -5,7 +5,6 @@
 #include "offset_store/store.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -23,6 +22,7 @@ enum {
 int main(int argc, char **argv)
 {
     const char *region_name;
+    const char *root_name;
     const char *message;
     OffsetStoreStatus status;
     OffsetStore store;
@@ -34,13 +34,14 @@ int main(int argc, char **argv)
      * The producer creates a fresh region, initializes allocator state, stores
      * one object payload, and prints the resulting object offset for a consumer.
      */
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s <shm-name> <message>\n", argv[0]);
+    if (argc != 4) {
+        fprintf(stderr, "usage: %s <shm-name> <root-name> <message>\n", argv[0]);
         return 1;
     }
 
     region_name = argv[1];
-    message = argv[2];
+    root_name = argv[2];
+    message = argv[3];
     payload_size = strlen(message) + 1;
 
     status = offset_store_bootstrap(&store, region_name, EXAMPLE_REGION_SIZE);
@@ -66,8 +67,17 @@ int main(int argc, char **argv)
     }
 
     memcpy(payload, message, payload_size);
-    printf("region=%s object_offset=%llu message=%s\n",
+    status = offset_store_set_root(&store, root_name, object);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        fprintf(stderr, "offset_store_set_root: %s\n", offset_store_status_string(status));
+        offset_store_close(&store);
+        shm_region_unlink(region_name);
+        return 1;
+    }
+
+    printf("region=%s root=%s object_offset=%llu message=%s\n",
         region_name,
+        root_name,
         (unsigned long long) object.offset,
         payload);
 

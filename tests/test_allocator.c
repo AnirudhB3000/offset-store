@@ -255,6 +255,50 @@ static void test_allocator_getters_report_consistent_state(void)
 }
 
 /**
+ * @brief Verifies allocator statistics on a fresh heap and after allocation/free.
+ */
+static void test_allocator_stats_track_free_and_used_bytes(void)
+{
+    char name[64];
+    ShmRegion region;
+    void *allocation;
+    AllocatorStats initial_stats;
+    AllocatorStats allocated_stats;
+    AllocatorStats freed_stats;
+
+    make_region_name(name, sizeof(name), "alloc-stats");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_stats(&region, &initial_stats));
+    TEST_ASSERT_EQUAL_UINT64(initial_stats.heap_size, initial_stats.free_bytes + initial_stats.used_bytes);
+    TEST_ASSERT_EQUAL_UINT64(initial_stats.heap_size, initial_stats.free_bytes);
+    TEST_ASSERT_EQUAL_UINT64(0, initial_stats.used_bytes);
+    TEST_ASSERT_EQUAL_UINT64(1, initial_stats.free_block_count);
+    TEST_ASSERT_EQUAL_UINT64(initial_stats.free_bytes, initial_stats.largest_free_block);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 96, 16, &allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_stats(&region, &allocated_stats));
+    TEST_ASSERT_EQUAL_UINT64(allocated_stats.heap_size, allocated_stats.free_bytes + allocated_stats.used_bytes);
+    TEST_ASSERT_TRUE(allocated_stats.free_bytes < initial_stats.free_bytes);
+    TEST_ASSERT_TRUE(allocated_stats.used_bytes > 0);
+    TEST_ASSERT_TRUE(allocated_stats.free_block_count >= 1);
+    TEST_ASSERT_TRUE(allocated_stats.largest_free_block <= allocated_stats.free_bytes);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_free(&region, allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_stats(&region, &freed_stats));
+    TEST_ASSERT_EQUAL_UINT64(freed_stats.heap_size, freed_stats.free_bytes + freed_stats.used_bytes);
+    TEST_ASSERT_EQUAL_UINT64(0, freed_stats.used_bytes);
+    TEST_ASSERT_EQUAL_UINT64(freed_stats.heap_size, freed_stats.free_bytes);
+    TEST_ASSERT_TRUE(freed_stats.free_block_count >= 1);
+    TEST_ASSERT_TRUE(freed_stats.largest_free_block <= freed_stats.free_bytes);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Verifies allocator getter contracts on invalid input and unknown pointers.
  */
 static void test_allocator_getters_reject_invalid_arguments(void)
@@ -292,6 +336,29 @@ static void test_allocator_getters_reject_invalid_arguments(void)
 }
 
 /**
+ * @brief Verifies allocator statistics reject invalid arguments.
+ */
+static void test_allocator_stats_reject_invalid_arguments(void)
+{
+    char name[64];
+    ShmRegion region;
+    AllocatorStats stats;
+
+    make_region_name(name, sizeof(name), "alloc-stats-invalid");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_stats(NULL, &stats));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, allocator_get_stats(&region, &stats));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_stats(&region, NULL));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Runs the allocator unit tests.
  *
  * @return Zero on success.
@@ -308,5 +375,7 @@ int main(void)
     RUN_TEST(test_allocator_rejects_invalid_alignment);
     RUN_TEST(test_allocator_getters_report_consistent_state);
     RUN_TEST(test_allocator_getters_reject_invalid_arguments);
+    RUN_TEST(test_allocator_stats_track_free_and_used_bytes);
+    RUN_TEST(test_allocator_stats_reject_invalid_arguments);
     return UNITY_END();
 }

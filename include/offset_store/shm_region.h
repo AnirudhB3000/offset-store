@@ -2,6 +2,7 @@
 #define OFFSET_STORE_SHM_REGION_H
 
 #include "offset_store/offset_store.h"
+#include "offset_store/offset_ptr.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -40,7 +41,20 @@ typedef struct {
  * @brief Public region layout version stored in the shared header.
  */
 enum {
-    OFFSET_STORE_REGION_VERSION = 1
+    OFFSET_STORE_REGION_VERSION = 2
+};
+
+/**
+ * @brief Fixed root-table limits stored in the private shared region header.
+ *
+ * Root names are stored inline in a fixed-capacity table so root discovery
+ * remains deterministic and does not require allocator recursion.
+ */
+enum {
+    /** Maximum number of named roots stored in one region. */
+    OFFSET_STORE_ROOT_CAPACITY = 16,
+    /** Maximum root-name length including the terminating null byte. */
+    OFFSET_STORE_ROOT_NAME_LENGTH = 32
 };
 
 /**
@@ -138,5 +152,41 @@ const void *shm_region_data_const(const ShmRegion *region);
  * @return Usable payload size in bytes, or zero on invalid input.
  */
 size_t shm_region_usable_size(const ShmRegion *region);
+
+/**
+ * @brief Stores or replaces a named root entry inside the shared region.
+ *
+ * This helper acquires the region mutex internally and updates the fixed root
+ * table stored in the private shared header.
+ *
+ * @param region Region descriptor whose root table should be updated.
+ * @param name Root name to create or replace.
+ * @param object Offset handle stored for the root.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_set_root(ShmRegion *region, const char *name, OffsetPtr object);
+/**
+ * @brief Looks up a named root entry inside the shared region.
+ *
+ * This helper acquires the region mutex internally before reading the fixed
+ * root table stored in the private shared header.
+ *
+ * @param region Region descriptor whose root table should be queried.
+ * @param name Root name to resolve.
+ * @param[out] out_object Stored root handle on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_get_root(ShmRegion *region, const char *name, OffsetPtr *out_object);
+/**
+ * @brief Removes a named root entry from the shared region.
+ *
+ * This helper acquires the region mutex internally before clearing the fixed
+ * root table entry stored in the private shared header.
+ *
+ * @param region Region descriptor whose root table should be updated.
+ * @param name Root name to remove.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name);
 
 #endif

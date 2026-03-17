@@ -2,6 +2,7 @@
 #define OFFSET_STORE_STORE_H
 
 #include "offset_store/allocator.h"
+#include "offset_store/offset_ptr.h"
 #include "offset_store/shm_region.h"
 
 #include <stddef.h>
@@ -52,5 +53,34 @@ OffsetStoreStatus offset_store_open_existing(OffsetStore *store, const char *nam
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus offset_store_close(OffsetStore *store);
+/**
+ * @brief Stores or replaces a named root in the shared region.
+ *
+ * Root entries provide stable discovery names for shared objects without
+ * requiring processes to exchange raw offsets out of band.
+ *
+ * @param store Store descriptor whose root table should be updated.
+ * @param name Root name to create or replace.
+ * @param object Object handle to associate with the root.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_set_root(OffsetStore *store, const char *name, OffsetPtr object);
+/**
+ * @brief Resolves a named root to its stored object handle.
+ *
+ * @param store Store descriptor whose root table should be queried.
+ * @param name Root name to resolve.
+ * @param[out] out_object Stored object handle on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_get_root(OffsetStore *store, const char *name, OffsetPtr *out_object);
+/**
+ * @brief Removes a named root from the shared region.
+ *
+ * @param store Store descriptor whose root table should be updated.
+ * @param name Root name to remove.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_remove_root(OffsetStore *store, const char *name);
 
 #endif

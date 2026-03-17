@@ -5,7 +5,6 @@
 #include "offset_store/store.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 
 /**
  * @brief Opens a store and resolves the object offset printed by the producer.
@@ -17,6 +16,7 @@
 int main(int argc, char **argv)
 {
     const char *region_name;
+    const char *root_name;
     OffsetStoreStatus status;
     OffsetStore store;
     OffsetPtr object;
@@ -28,16 +28,23 @@ int main(int argc, char **argv)
      * using the offset printed by the producer.
      */
     if (argc != 3) {
-        fprintf(stderr, "usage: %s <shm-name> <object-offset>\n", argv[0]);
+        fprintf(stderr, "usage: %s <shm-name> <root-name>\n", argv[0]);
         return 1;
     }
 
     region_name = argv[1];
-    object.offset = strtoull(argv[2], NULL, 10);
+    root_name = argv[2];
 
     status = offset_store_open_existing(&store, region_name);
     if (status != OFFSET_STORE_STATUS_OK) {
         fprintf(stderr, "offset_store_open_existing: %s\n", offset_store_status_string(status));
+        return 1;
+    }
+
+    status = offset_store_get_root(&store, root_name, &object);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        fprintf(stderr, "offset_store_get_root: %s\n", offset_store_status_string(status));
+        offset_store_close(&store);
         return 1;
     }
 

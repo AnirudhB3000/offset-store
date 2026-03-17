@@ -115,6 +115,7 @@ Current implemented `shm_region` responsibilities:
 - map a region with `mmap`
 - store and validate a fixed private region header at the start of the mapping
 - initialize and expose a process-shared mutex stored in the region header
+- store a fixed-capacity named root table for well-known shared objects
 - expose region metadata through narrow query helpers plus data start and usable
   payload size
 - close mappings and unlink shared memory objects
@@ -231,6 +232,8 @@ Current implemented allocator behavior:
   structural corruption
 - allocator metadata layout remains internal to `src/allocator.c`; the public API
   now exposes small query helpers instead of the raw allocator header struct
+- `allocator_get_stats(...)` provides a snapshot of heap usage and free-space
+  fragmentation by walking the current block layout at call time
 
 ## Object Layout
 
@@ -269,6 +272,16 @@ Current implemented object-store behavior:
   ownership before returning pointers
 - freeing an object releases the underlying allocator block
 
+Current implemented root-discovery behavior:
+
+- the private region header contains a fixed-capacity root table
+- each root binds a short stable name to an `OffsetPtr`
+- roots are intended for well-known entry-point objects such as shared config,
+  top-level indexes, or coordination objects
+- root-table operations take the region mutex internally
+- freeing a rooted object does not automatically remove the root, so callers
+  must keep root bindings in sync with object lifetime
+
 ## Build And Debug Workflow
 
 Current build entry points:
@@ -282,10 +295,10 @@ Example flow:
 
 1. Run `make examples`.
 2. Start the producer:
-   `./build/producer /offset-store-demo "hello from shared memory"`
-3. Note the printed `object_offset`.
+   `./build/producer /offset-store-demo greeting "hello from shared memory"`
+3. Note the printed root name and object offset.
 4. In another shell, run the consumer:
-   `./build/consumer /offset-store-demo <object_offset>`
+   `./build/consumer /offset-store-demo greeting`
 5. When done, remove the shared memory object manually if needed:
    `rm /dev/shm/offset-store-demo`
 
@@ -323,20 +336,28 @@ Current accessor naming direction:
 - read-only region data access now uses `shm_region_data_const(...)` while
   mutable access continues through `shm_region_data(...)`
 
+Current allocator introspection direction:
+
+- `allocator_get_stats(...)` reports heap size, free bytes, used bytes, largest
+  free block, and free block count
+- stats are derived from a read-only heap walk rather than persistent shared
+  counters
+- allocation-failure counters are not yet tracked in shared metadata
+
 ## API Usage
 
 Recommended high-level create flow:
 
 1. Call `offset_store_bootstrap(...)` to create, map, and initialize a store.
 2. Check the returned `OffsetStoreStatus`.
-3. Use `store.region` with allocator or object-store APIs.
+3. Allocate shared objects and bind well-known ones with `offset_store_set_root(...)` when cross-process discovery is needed.
 4. Call `offset_store_close(...)` when the process is done with the mapping.
 
 Recommended high-level attach flow:
 
 1. Call `offset_store_open_existing(...)` to attach to an existing store.
 2. Check the returned `OffsetStoreStatus`.
-3. Resolve and use shared objects through their `OffsetPtr` handles.
+3. Resolve well-known objects with `offset_store_get_root(...)` and then use their `OffsetPtr` handles.
 4. Call `offset_store_close(...)` when finished.
 
 Recommended low-level create flow:
@@ -350,10 +371,11 @@ Recommended low-level create flow:
 Recommended object access flow:
 
 1. Keep object references as `OffsetPtr` values.
-2. Resolve headers with `object_store_get_header(...)` or `object_store_get_header_mut(...)`.
-3. Resolve payloads with `object_store_get_payload_const(...)` or `object_store_get_payload(...)`.
-4. Treat returned raw pointers as process-local and transient.
-5. Free objects with `object_store_free(...)` when they are no longer needed.
+2. Persist or exchange stable discovery names through the root table when other processes need to find top-level objects.
+3. Resolve headers with `object_store_get_header(...)` or `object_store_get_header_mut(...)`.
+4. Resolve payloads with `object_store_get_payload_const(...)` or `object_store_get_payload(...)`.
+5. Treat returned raw pointers as process-local and transient.
+6. Remove any root bindings before freeing rooted objects with `object_store_free(...)`.
 
 Recommended error-handling pattern:
 

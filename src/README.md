@@ -30,6 +30,7 @@ typedef struct {
     uint32_t reserved;
     uint64_t total_size;
     pthread_mutex_t mutex;
+    ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
 } ShmRegionHeader;
 ```
 
@@ -41,6 +42,8 @@ Important points:
   mapping
 - the mutex is configured with `PTHREAD_PROCESS_SHARED` and provides the current
   coarse-grained synchronization primitive for allocator mutation
+- the header also contains a fixed-capacity inline root table for discovering
+  well-known shared objects by stable names
 - attach paths validate `magic`, `version`, and `total_size` before the region
   is considered usable
 - callers now have both `shm_region_data(...)` and `shm_region_data_const(...)`
@@ -181,6 +184,10 @@ functions do not currently lock. They assume callers either tolerate a
 best-effort snapshot or arrange higher-level synchronization when concurrent
 mutation matters.
 
+The same category now includes `allocator_get_stats(...)`, which derives
+heap-usage and fragmentation numbers by walking the current block sequence at
+call time instead of maintaining persistent counters in shared metadata.
+
 The same rule extends to object-store accessors. Functions such as
 `object_store_get_header(...)`, `object_store_get_header_mut(...)`,
 `object_store_get_payload_const(...)`, and `object_store_get_payload(...)`
@@ -269,6 +276,9 @@ That means the current consistency model is simple but limited:
 - `offset_store_bootstrap(...)`: create region, map it, initialize allocator
 - `offset_store_open_existing(...)`: attach to region, validate allocator state
 - `offset_store_close(...)`: close the mapping
+- `offset_store_set_root(...)`: store or replace a named root binding
+- `offset_store_get_root(...)`: resolve a named root to its stored object handle
+- `offset_store_remove_root(...)`: delete a named root binding
 
 `OffsetStore` is process-local convenience state, not a shared-memory structure.
 It exists to reduce boilerplate in examples and common lifecycle code.
