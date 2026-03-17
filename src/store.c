@@ -97,6 +97,28 @@ OffsetStoreStatus offset_store_close(OffsetStore *store)
 }
 
 /**
+ * @brief Validates the shared region and allocator state of an opened store.
+ *
+ * @param store Store descriptor to validate.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_validate(const OffsetStore *store)
+{
+    OffsetStoreStatus status;
+
+    if (store == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_validate(&store->region);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    return allocator_validate(&store->region);
+}
+
+/**
  * @brief Stores or replaces a named root in the shared region.
  *
  * @param store Store descriptor whose root table should be updated.

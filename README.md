@@ -118,6 +118,7 @@ Current implemented `shm_region` responsibilities:
 - store a fixed-capacity named root table for well-known shared objects
 - expose region metadata through narrow query helpers plus data start and usable
   payload size
+- expose a public region-header validation entry point
 - close mappings and unlink shared memory objects
 
 Public type boundary:
@@ -184,6 +185,20 @@ Required safety behavior:
 - preserve structure layout consistency across compiler settings
 - avoid storing host-process-only addresses in persistent metadata
 
+Algorithmically, offset handling is simple:
+
+1. To store a reference, subtract the region base from a process-local pointer.
+2. Reject the result if it is zero or falls outside the mapped region.
+3. Persist only the resulting integer offset.
+4. To resolve a reference, add the stored offset back to the current process's
+   region base.
+5. Reject the resolution if the requested access span would run past the mapping.
+
+That algorithm is the foundation for every higher-level structure in the
+repository. The allocator, object store, and root table all depend on the fact
+that an integer offset survives attach-at-a-different-address while a raw
+pointer does not.
+
 ## Allocator Architecture
 
 The shared heap uses a custom allocator that operates entirely inside the shared
@@ -235,6 +250,26 @@ Current implemented allocator behavior:
 - `allocator_get_stats(...)` provides a snapshot of heap usage and free-space
   fragmentation by walking the current block layout at call time
 
+Allocator algorithm:
+
+1. `allocator_init(...)` computes where the allocator header ends, rounds the
+   heap start up to `max_align_t`, and creates one initial free block covering
+   the remaining bytes.
+2. `allocator_alloc(...)` walks the free list in first-fit order.
+3. For each candidate block, it computes where a payload could start after the
+   block header and allocation prefix, then rounds that payload start up to the
+   caller's requested alignment.
+4. If the block is large enough, the allocator either consumes the whole block
+   or splits it into an allocated block plus a remainder free block.
+5. Immediately before the returned payload, the allocator writes a small prefix
+   containing the owning block offset.
+6. `allocator_free(...)` reads that prefix back, reconstructs the block, checks
+   that it still looks like a live allocation, and pushes it onto the free list.
+
+This is intentionally a simple first-fit allocator. It does not currently
+coalesce adjacent free blocks, so fragmentation is possible after mixed-size
+allocation patterns.
+
 ## Object Layout
 
 Objects stored in the shared heap should begin with a stable header.
@@ -271,6 +306,27 @@ Current implemented object-store behavior:
 - header and payload resolution helpers validate both region bounds and allocator
   ownership before returning pointers
 - freeing an object releases the underlying allocator block
+- `object_store_validate(...)` provides explicit per-handle validation for live
+  objects without requiring callers to infer validity from a failed accessor
+- one object-header flag bit is now reserved by the library to mark freed
+  objects and reject stale-handle reuse more explicitly
+
+Object-store algorithm:
+
+1. `object_store_alloc(...)` asks the allocator for enough bytes to hold
+   `ObjectHeader` plus the requested payload.
+2. It writes the fixed header at the start of that allocation and converts the
+   header address into an `OffsetPtr`.
+3. That `OffsetPtr` becomes the stable shared-memory handle for the object.
+4. Accessors resolve the handle back to a process-local pointer, verify that it
+   points to the start of a live allocator allocation, and confirm that the
+   header-declared payload fits within that allocation.
+5. `object_store_free(...)` resolves the same handle, marks the header as
+   freed, poisons selected fields for debugging, and then releases the
+   underlying allocation back to the allocator.
+
+The important detail is that the object store does not own a second heap or
+registry. It is a disciplined layer on top of the shared allocator.
 
 Current implemented root-discovery behavior:
 
@@ -281,6 +337,20 @@ Current implemented root-discovery behavior:
 - root-table operations take the region mutex internally
 - freeing a rooted object does not automatically remove the root, so callers
   must keep root bindings in sync with object lifetime
+
+Root-table algorithm:
+
+1. The private region header contains a fixed-capacity array of root entries.
+2. Each entry stores an occupancy flag, a short inline name, and an `OffsetPtr`.
+3. `offset_store_set_root(...)` locks the region, scans for an existing matching
+   name, and otherwise uses the first free slot.
+4. `offset_store_get_root(...)` locks the region, performs a linear scan for the
+   requested name, and returns the stored handle.
+5. `offset_store_remove_root(...)` locks the region, clears the matching entry,
+   and resets its handle to null.
+
+This is intentionally not a hash table yet. The fixed array keeps layout and
+validation simple while still solving the immediate discovery problem.
 
 ## Build And Debug Workflow
 
@@ -350,15 +420,36 @@ Recommended high-level create flow:
 
 1. Call `offset_store_bootstrap(...)` to create, map, and initialize a store.
 2. Check the returned `OffsetStoreStatus`.
-3. Allocate shared objects and bind well-known ones with `offset_store_set_root(...)` when cross-process discovery is needed.
-4. Call `offset_store_close(...)` when the process is done with the mapping.
+3. Optionally call `offset_store_validate(...)` after setup when a caller wants an explicit integrity check.
+4. Allocate shared objects and bind well-known ones with `offset_store_set_root(...)` when cross-process discovery is needed.
+5. Call `offset_store_close(...)` when the process is done with the mapping.
+
+Bootstrap algorithm:
+
+1. Create a POSIX shared-memory object with `shm_open(..., O_CREAT | O_EXCL, ...)`.
+2. Resize it with `ftruncate(...)`.
+3. Map it with `mmap(...)`.
+4. Write the private region header, initialize the process-shared mutex, and
+   clear the fixed root table.
+5. Initialize allocator metadata and seed the heap with one large free block.
+6. Return a process-local `OffsetStore` wrapper that points at the mapping.
 
 Recommended high-level attach flow:
 
 1. Call `offset_store_open_existing(...)` to attach to an existing store.
 2. Check the returned `OffsetStoreStatus`.
-3. Resolve well-known objects with `offset_store_get_root(...)` and then use their `OffsetPtr` handles.
-4. Call `offset_store_close(...)` when finished.
+3. Optionally call `offset_store_validate(...)` to verify the attached region and allocator state explicitly.
+4. Resolve well-known objects with `offset_store_get_root(...)` and then use their `OffsetPtr` handles.
+5. Call `offset_store_close(...)` when finished.
+
+Attach algorithm:
+
+1. Open the existing shared-memory object with `shm_open(...)`.
+2. Discover its size with `fstat(...)`.
+3. Map it with `mmap(...)`.
+4. Validate the region header magic, layout version, and recorded total size.
+5. Validate allocator metadata before treating the store as usable.
+6. Resolve roots or object handles only after the region and allocator checks pass.
 
 Recommended low-level create flow:
 
@@ -374,8 +465,10 @@ Recommended object access flow:
 2. Persist or exchange stable discovery names through the root table when other processes need to find top-level objects.
 3. Resolve headers with `object_store_get_header(...)` or `object_store_get_header_mut(...)`.
 4. Resolve payloads with `object_store_get_payload_const(...)` or `object_store_get_payload(...)`.
-5. Treat returned raw pointers as process-local and transient.
-6. Remove any root bindings before freeing rooted objects with `object_store_free(...)`.
+5. Use `object_store_validate(...)` when a caller needs an explicit status-based integrity check for one object handle.
+6. Treat returned raw pointers as process-local and transient.
+7. Remove any root bindings before freeing rooted objects with `object_store_free(...)`.
+8. Do not reuse object handles after free; freed objects are explicitly marked and rejected by accessors.
 
 Recommended error-handling pattern:
 
@@ -385,6 +478,15 @@ Recommended error-handling pattern:
 - treat `OFFSET_STORE_STATUS_NOT_FOUND` as a normal missing-object or missing-region case
 - treat `NULL` from pointer-returning accessors as resolution failure and avoid dereferencing
 - close any successfully opened region/store descriptor on the error path before returning
+
+Current validation surface:
+
+- `shm_region_validate(...)` checks the private shared-region header
+- `allocator_validate(...)` checks allocator metadata plus heap/free-list structure
+- `object_store_validate(...)` checks one specific object handle
+- `offset_store_validate(...)` checks the region header and allocator state together
+- there is not yet a heap-wide object scan because the current layout does not
+  maintain a global object registry
 
 Recommended synchronization pattern:
 

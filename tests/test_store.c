@@ -122,6 +122,30 @@ static void test_open_existing_rejects_region_without_allocator_state(void)
 }
 
 /**
+ * @brief Verifies whole-store validation covers the region header and allocator state.
+ */
+static void test_store_validate_checks_region_and_allocator(void)
+{
+    char name[64];
+    OffsetStore store;
+    uint64_t *magic;
+
+    make_region_name(name, sizeof(name), "store-validate");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&store, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_validate(&store));
+
+    magic = (uint64_t *) store.region.base;
+    TEST_ASSERT_NOT_NULL(magic);
+    *magic = 0;
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, offset_store_validate(&store));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&store));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Verifies that a named root can be stored, resolved, and removed.
  */
 static void test_named_roots_round_trip(void)
@@ -258,6 +282,7 @@ int main(void)
     RUN_TEST(test_bootstrap_is_one_shot_per_region_name);
     RUN_TEST(test_open_existing_attaches_to_initialized_store);
     RUN_TEST(test_open_existing_rejects_region_without_allocator_state);
+    RUN_TEST(test_store_validate_checks_region_and_allocator);
     RUN_TEST(test_named_roots_round_trip);
     RUN_TEST(test_open_existing_observes_named_roots);
     RUN_TEST(test_named_roots_replace_existing_binding_and_validate_input);

@@ -136,6 +136,30 @@ static void test_open_rejects_invalid_header(void)
 }
 
 /**
+ * @brief Verifies the public region validation helper on valid and corrupted headers.
+ */
+static void test_region_validate_reports_header_integrity(void)
+{
+    char name[64];
+    ShmRegion region;
+    uint64_t *magic;
+
+    make_region_name(name, sizeof(name), "validate");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_validate(&region));
+
+    magic = (uint64_t *) region.base;
+    TEST_ASSERT_NOT_NULL(magic);
+    *magic = 0;
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, shm_region_validate(&region));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Verifies that region creation rejects sizes smaller than the header.
  */
 static void test_create_rejects_too_small_region(void)
@@ -274,6 +298,7 @@ int main(void)
     RUN_TEST(test_create_initializes_header);
     RUN_TEST(test_open_observes_existing_mapping);
     RUN_TEST(test_open_rejects_invalid_header);
+    RUN_TEST(test_region_validate_reports_header_integrity);
     RUN_TEST(test_create_rejects_too_small_region);
     RUN_TEST(test_process_shared_mutex_coordinates_access);
     RUN_TEST(test_const_data_accessor);

@@ -142,6 +142,23 @@ static bool shm_region_validate_header(const ShmRegion *region)
 }
 
 /**
+ * @brief Validates the private shared region header for an attached mapping.
+ *
+ * @param region Region descriptor to validate.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_validate(const ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_validate_header(region)
+        ? OFFSET_STORE_STATUS_OK
+        : OFFSET_STORE_STATUS_INVALID_STATE;
+}
+
+/**
  * @brief Returns whether a candidate root name fits in the fixed root table.
  *
  * @param name Root name to validate.

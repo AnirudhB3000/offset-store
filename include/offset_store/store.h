@@ -54,6 +54,16 @@ OffsetStoreStatus offset_store_open_existing(OffsetStore *store, const char *nam
  */
 OffsetStoreStatus offset_store_close(OffsetStore *store);
 /**
+ * @brief Validates the shared region and allocator state of an opened store.
+ *
+ * This high-level validation checks the region header and allocator metadata
+ * together so callers can verify that an attached store is structurally usable.
+ *
+ * @param store Store descriptor to validate.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_validate(const OffsetStore *store);
+/**
  * @brief Stores or replaces a named root in the shared region.
  *
  * Root entries provide stable discovery names for shared objects without

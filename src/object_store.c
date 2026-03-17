@@ -47,7 +47,11 @@ static bool object_store_resolve_header(
         return false;
     }
 
-    return total_size <= allocation_size;
+    if (total_size > allocation_size) {
+        return false;
+    }
+
+    return ((((const ObjectHeader *) *out_header)->flags & OFFSET_STORE_OBJECT_FLAG_FREED) == 0u);
 }
 
 /**
@@ -169,6 +173,7 @@ OffsetStoreStatus object_store_alloc(ShmRegion *region, uint32_t type, size_t pa
 OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object)
 {
     ObjectHeader *header;
+    size_t payload_size;
 
     if (region == NULL || offset_ptr_is_null(object)) {
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
@@ -183,5 +188,36 @@ OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object)
         return OFFSET_STORE_STATUS_NOT_FOUND;
     }
 
+    payload_size = header->size;
+    header->flags |= OFFSET_STORE_OBJECT_FLAG_FREED;
+    header->type = 0;
+    header->reserved = UINT32_C(0x46524545);
+    header->size = (uint32_t) payload_size;
+
     return allocator_free(region, header);
+}
+
+/**
+ * @brief Validates that an object handle resolves to a live well-formed object.
+ *
+ * @param region Region whose mapping contains the object.
+ * @param object Offset handle to validate.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus object_store_validate(const ShmRegion *region, OffsetPtr object)
+{
+    const ObjectHeader *header;
+
+    if (region == NULL || offset_ptr_is_null(object)) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = object_store_get_header(region, object);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_NOT_FOUND;
+    }
+
+    return object_store_resolve_header(region, object, header->size, (void **) &header)
+        ? OFFSET_STORE_STATUS_OK
+        : OFFSET_STORE_STATUS_INVALID_STATE;
 }

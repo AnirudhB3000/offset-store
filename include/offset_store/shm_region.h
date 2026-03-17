@@ -102,6 +102,16 @@ OffsetStoreStatus shm_region_lock(ShmRegion *region);
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus shm_region_unlock(ShmRegion *region);
+/**
+ * @brief Validates the private shared region header for an attached mapping.
+ *
+ * This check verifies that the mapped region contains the expected magic,
+ * layout version, and total-size metadata for the current binary.
+ *
+ * @param region Region descriptor to validate.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_validate(const ShmRegion *region);
 
 /**
  * @brief Returns the size of the private shared region header.

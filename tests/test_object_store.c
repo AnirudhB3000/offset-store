@@ -172,6 +172,64 @@ static void test_object_rejects_invalid_offset(void)
 }
 
 /**
+ * @brief Verifies targeted object validation for live, freed, and invalid handles.
+ */
+static void test_object_validate_reports_live_and_invalid_objects(void)
+{
+    char name[64];
+    ShmRegion region;
+    OffsetPtr object;
+    OffsetPtr invalid;
+
+    make_region_name(name, sizeof(name), "object-validate");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_alloc(&region, 19, 24, &object));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_validate(&region, object));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_free(&region, object));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_NOT_FOUND, object_store_validate(&region, object));
+
+    invalid.offset = 8;
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_NOT_FOUND, object_store_validate(&region, invalid));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, object_store_validate(&region, offset_ptr_null()));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies that freed objects are rejected by accessors and validation.
+ */
+static void test_freed_objects_are_rejected_by_accessors(void)
+{
+    char name[64];
+    ShmRegion region;
+    OffsetPtr object;
+
+    make_region_name(name, sizeof(name), "object-freed-flag");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_alloc(&region, 21, 24, &object));
+    TEST_ASSERT_NOT_NULL(object_store_get_header(&region, object));
+    TEST_ASSERT_NOT_NULL(object_store_get_payload_const(&region, object));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, object_store_free(&region, object));
+    TEST_ASSERT_NULL(object_store_get_header(&region, object));
+    TEST_ASSERT_NULL(object_store_get_header_mut(&region, object));
+    TEST_ASSERT_NULL(object_store_get_payload_const(&region, object));
+    TEST_ASSERT_NULL(object_store_get_payload(&region, object));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_NOT_FOUND, object_store_validate(&region, object));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Verifies getter-style header and payload accessors agree on the same object.
  */
 static void test_object_getters_are_consistent(void)
@@ -244,6 +302,8 @@ int main(void)
     RUN_TEST(test_object_offset_is_stable_across_attach);
     RUN_TEST(test_object_free_releases_storage);
     RUN_TEST(test_object_rejects_invalid_offset);
+    RUN_TEST(test_object_validate_reports_live_and_invalid_objects);
+    RUN_TEST(test_freed_objects_are_rejected_by_accessors);
     RUN_TEST(test_object_getters_are_consistent);
     RUN_TEST(test_object_getters_reject_invalid_arguments);
     return UNITY_END();

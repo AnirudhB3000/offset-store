@@ -37,6 +37,14 @@ typedef struct {
 /**@}*/
 
 /**
+ * @brief Public object-header flag bits reserved by the library.
+ */
+enum {
+    /** Object has been freed and must no longer be resolved or reused by callers. */
+    OFFSET_STORE_OBJECT_FLAG_FREED = 1u
+};
+
+/**
  * @brief Allocates a new object and returns its shared offset handle.
  *
  * @param region Region whose object heap should satisfy the request.
@@ -54,6 +62,18 @@ OffsetStoreStatus object_store_alloc(ShmRegion *region, uint32_t type, size_t pa
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object);
+/**
+ * @brief Validates that an object handle resolves to a live well-formed object.
+ *
+ * This check verifies that the handle is non-null, resolves within the mapped
+ * region, points to the start of a live allocator allocation, and that the
+ * declared payload fits within that allocation.
+ *
+ * @param region Region whose mapping contains the object.
+ * @param object Offset handle to validate.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus object_store_validate(const ShmRegion *region, OffsetPtr object);
 
 /**
  * @brief Resolves an object handle to a read-only header pointer.

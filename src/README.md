@@ -48,6 +48,8 @@ Important points:
   is considered usable
 - callers now have both `shm_region_data(...)` and `shm_region_data_const(...)`
   so read-only access does not require casting away const intent
+- `shm_region_validate(...)` now exposes the private header integrity check as a
+  public status-returning helper
 
 This module deliberately keeps the shared header typedef private so callers
 cannot accidentally depend on its binary layout in public code.
@@ -244,12 +246,19 @@ Public helpers are thin wrappers around that resolution:
 - `object_store_get_header_mut(...)`
 - `object_store_get_payload_const(...)`
 - `object_store_get_payload(...)`
+- `object_store_validate(...)`
 
 ### Free Flow
 
 `object_store_free(...)` resolves the object header, verifies that the full
 object span is still valid, and then passes the header pointer back to
 `allocator_free(...)`.
+
+Before releasing the block, the object store now marks the header with the
+library-owned `OFFSET_STORE_OBJECT_FLAG_FREED` bit and poisons selected header
+fields. That gives stale-handle reads a clearer failure mode: object accessors
+and `object_store_validate(...)` reject freed objects explicitly instead of
+silently depending only on allocator ownership checks.
 
 The object store does not add a second free list or object registry. It relies
 completely on allocator ownership and offset validation.
@@ -276,6 +285,7 @@ That means the current consistency model is simple but limited:
 - `offset_store_bootstrap(...)`: create region, map it, initialize allocator
 - `offset_store_open_existing(...)`: attach to region, validate allocator state
 - `offset_store_close(...)`: close the mapping
+- `offset_store_validate(...)`: validate the region header plus allocator state
 - `offset_store_set_root(...)`: store or replace a named root binding
 - `offset_store_get_root(...)`: resolve a named root to its stored object handle
 - `offset_store_remove_root(...)`: delete a named root binding
