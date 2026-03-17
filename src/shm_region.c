@@ -31,6 +31,23 @@ typedef struct {
 } ShmRegionRootEntry;
 
 /**
+ * @brief Private fixed-size index entry stored in the shared region header.
+ *
+ * Index keys are also stored inline so the directory remains deterministic and
+ * independent of allocator-managed dynamic storage.
+ */
+typedef struct {
+    /** Whether this entry currently stores a valid index binding. */
+    uint8_t in_use;
+    /** Reserved padding for future entry flags. */
+    uint8_t reserved[7];
+    /** Null-terminated index key stored inline in the shared header. */
+    char key[OFFSET_STORE_INDEX_KEY_LENGTH];
+    /** Offset handle associated with the index key. */
+    OffsetPtr object;
+} ShmRegionIndexEntry;
+
+/**
  * @brief Private shared-memory header stored at offset zero in every region.
  *
  * Keeping this typedef private prevents callers from depending on binary layout
@@ -49,6 +66,8 @@ typedef struct {
     pthread_mutex_t mutex;
     /** Fixed-capacity root table for well-known shared objects. */
     ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
+    /** Fixed-capacity index table for general shared object discovery. */
+    ShmRegionIndexEntry index[OFFSET_STORE_INDEX_CAPACITY];
 } ShmRegionHeader;
 
 /**
@@ -182,6 +201,29 @@ static bool shm_region_is_root_name_valid(const char *name)
 }
 
 /**
+ * @brief Returns whether a candidate index key fits in the fixed index table.
+ *
+ * @param key Index key to validate.
+ * @return true if the key is non-empty and fits in the fixed inline buffer.
+ * @return false otherwise.
+ */
+static bool shm_region_is_index_key_valid(const char *key)
+{
+    size_t length;
+
+    if (key == NULL) {
+        return false;
+    }
+
+    length = strnlen(key, OFFSET_STORE_INDEX_KEY_LENGTH);
+    if (length == 0 || length >= OFFSET_STORE_INDEX_KEY_LENGTH) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * @brief Returns a const view of the private shared region header.
  *
  * @param region Region descriptor to inspect.
@@ -224,6 +266,21 @@ static ShmRegionRootEntry *shm_region_roots(ShmRegionHeader *header)
     }
 
     return header->roots;
+}
+
+/**
+ * @brief Returns the fixed index entry array stored in the private header.
+ *
+ * @param header Shared region header to inspect.
+ * @return Pointer to the first index entry, or `NULL` on failure.
+ */
+static ShmRegionIndexEntry *shm_region_index(ShmRegionHeader *header)
+{
+    if (header == NULL) {
+        return NULL;
+    }
+
+    return header->index;
 }
 
 /**
@@ -278,6 +335,57 @@ static ShmRegionRootEntry *shm_region_find_free_root(ShmRegionHeader *header)
 }
 
 /**
+ * @brief Finds an existing index entry by key.
+ *
+ * @param header Shared region header to inspect.
+ * @param key Index key to search for.
+ * @return Matching index entry, or `NULL` if the key is absent.
+ */
+static ShmRegionIndexEntry *shm_region_find_index_entry(ShmRegionHeader *header, const char *key)
+{
+    size_t index;
+    ShmRegionIndexEntry *entries;
+
+    if (header == NULL || key == NULL) {
+        return NULL;
+    }
+
+    entries = shm_region_index(header);
+    for (index = 0; index < OFFSET_STORE_INDEX_CAPACITY; ++index) {
+        if (entries[index].in_use != 0 && strcmp(entries[index].key, key) == 0) {
+            return &entries[index];
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * @brief Finds the first unused index-table slot.
+ *
+ * @param header Shared region header to inspect.
+ * @return Unused index entry, or `NULL` if the table is full.
+ */
+static ShmRegionIndexEntry *shm_region_find_free_index_entry(ShmRegionHeader *header)
+{
+    size_t index;
+    ShmRegionIndexEntry *entries;
+
+    if (header == NULL) {
+        return NULL;
+    }
+
+    entries = shm_region_index(header);
+    for (index = 0; index < OFFSET_STORE_INDEX_CAPACITY; ++index) {
+        if (entries[index].in_use == 0) {
+            return &entries[index];
+        }
+    }
+
+    return NULL;
+}
+
+/**
  * @brief Clears the fixed root table stored in a new shared region.
  *
  * @param header Shared region header to initialize.
@@ -297,6 +405,29 @@ static void shm_region_init_roots(ShmRegionHeader *header)
         memset(roots[index].reserved, 0, sizeof(roots[index].reserved));
         memset(roots[index].name, 0, sizeof(roots[index].name));
         roots[index].object = offset_ptr_null();
+    }
+}
+
+/**
+ * @brief Clears the fixed index table stored in a new shared region.
+ *
+ * @param header Shared region header to initialize.
+ */
+static void shm_region_init_index(ShmRegionHeader *header)
+{
+    size_t index;
+    ShmRegionIndexEntry *entries;
+
+    if (header == NULL) {
+        return;
+    }
+
+    entries = shm_region_index(header);
+    for (index = 0; index < OFFSET_STORE_INDEX_CAPACITY; ++index) {
+        entries[index].in_use = 0;
+        memset(entries[index].reserved, 0, sizeof(entries[index].reserved));
+        memset(entries[index].key, 0, sizeof(entries[index].key));
+        entries[index].object = offset_ptr_null();
     }
 }
 
@@ -383,6 +514,7 @@ OffsetStoreStatus shm_region_create(ShmRegion *out_region, const char *name, siz
     header->reserved = 0;
     header->total_size = (uint64_t) out_region->size;
     shm_region_init_roots(header);
+    shm_region_init_index(header);
     status = shm_region_init_mutex(header);
     if (status != OFFSET_STORE_STATUS_OK) {
         shm_region_close(out_region);
@@ -757,6 +889,163 @@ OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name)
     entry->in_use = 0;
     memset(entry->reserved, 0, sizeof(entry->reserved));
     memset(entry->name, 0, sizeof(entry->name));
+    entry->object = offset_ptr_null();
+
+    return shm_region_unlock(region);
+}
+
+/**
+ * @brief Stores or replaces an indexed entry in the shared region header.
+ *
+ * @param region Region descriptor whose index should be updated.
+ * @param key Index key to create or replace.
+ * @param object Object handle stored for the key.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_put(ShmRegion *region, const char *key, OffsetPtr object)
+{
+    OffsetStoreStatus status;
+    ShmRegionHeader *header;
+    ShmRegionIndexEntry *entry;
+
+    if (region == NULL || !shm_region_is_index_key_valid(key) || offset_ptr_is_null(object)) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = shm_region_header_mut(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_lock(region);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    entry = shm_region_find_index_entry(header, key);
+    if (entry == NULL) {
+        entry = shm_region_find_free_index_entry(header);
+    }
+
+    if (entry == NULL) {
+        shm_region_unlock(region);
+        return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
+    }
+
+    entry->in_use = 1;
+    memset(entry->reserved, 0, sizeof(entry->reserved));
+    memset(entry->key, 0, sizeof(entry->key));
+    memcpy(entry->key, key, strlen(key));
+    entry->object = object;
+
+    return shm_region_unlock(region);
+}
+
+/**
+ * @brief Resolves an indexed entry from the shared region header.
+ *
+ * @param region Region descriptor whose index should be queried.
+ * @param key Index key to resolve.
+ * @param[out] out_object Stored handle on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_get(ShmRegion *region, const char *key, OffsetPtr *out_object)
+{
+    OffsetStoreStatus status;
+    const ShmRegionHeader *header;
+    const ShmRegionIndexEntry *entry;
+
+    if (region == NULL || !shm_region_is_index_key_valid(key) || out_object == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = shm_region_header(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_lock(region);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    entry = shm_region_find_index_entry((ShmRegionHeader *) header, key);
+    if (entry == NULL) {
+        shm_region_unlock(region);
+        return OFFSET_STORE_STATUS_NOT_FOUND;
+    }
+
+    *out_object = entry->object;
+    return shm_region_unlock(region);
+}
+
+/**
+ * @brief Returns whether an indexed entry exists in the shared region header.
+ *
+ * @param region Region descriptor whose index should be queried.
+ * @param key Index key to test.
+ * @param[out] out_contains `true` if the key is present.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_contains(ShmRegion *region, const char *key, bool *out_contains)
+{
+    OffsetStoreStatus status;
+    const ShmRegionHeader *header;
+
+    if (region == NULL || !shm_region_is_index_key_valid(key) || out_contains == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = shm_region_header(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_lock(region);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    *out_contains = shm_region_find_index_entry((ShmRegionHeader *) header, key) != NULL;
+    return shm_region_unlock(region);
+}
+
+/**
+ * @brief Removes an indexed entry from the shared region header.
+ *
+ * @param region Region descriptor whose index should be updated.
+ * @param key Index key to remove.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_remove(ShmRegion *region, const char *key)
+{
+    OffsetStoreStatus status;
+    ShmRegionHeader *header;
+    ShmRegionIndexEntry *entry;
+
+    if (region == NULL || !shm_region_is_index_key_valid(key)) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = shm_region_header_mut(region);
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_lock(region);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    entry = shm_region_find_index_entry(header, key);
+    if (entry == NULL) {
+        shm_region_unlock(region);
+        return OFFSET_STORE_STATUS_NOT_FOUND;
+    }
+
+    entry->in_use = 0;
+    memset(entry->reserved, 0, sizeof(entry->reserved));
+    memset(entry->key, 0, sizeof(entry->key));
     entry->object = offset_ptr_null();
 
     return shm_region_unlock(region);

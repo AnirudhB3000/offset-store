@@ -232,6 +232,7 @@ static void test_allocator_getters_report_consistent_state(void)
     OffsetPtr free_list_head;
     uint64_t heap_offset;
     uint64_t heap_size;
+    uint64_t allocation_failures;
     size_t allocation_span;
 
     make_region_name(name, sizeof(name), "alloc-getters");
@@ -244,9 +245,11 @@ static void test_allocator_getters_report_consistent_state(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_offset(&region, &heap_offset));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_heap_size(&region, &heap_size));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_free_list_head(&region, &free_list_head));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_allocation_failures(&region, &allocation_failures));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_allocation_span(&region, allocation, &allocation_span));
     TEST_ASSERT_TRUE(heap_offset >= shm_region_header_size());
     TEST_ASSERT_TRUE(heap_size > 0);
+    TEST_ASSERT_EQUAL_UINT64(0, allocation_failures);
     TEST_ASSERT_TRUE(allocation_span >= 96);
     TEST_ASSERT_TRUE(free_list_head.offset == 0 || free_list_head.offset >= heap_offset);
 
@@ -277,6 +280,7 @@ static void test_allocator_stats_track_free_and_used_bytes(void)
     TEST_ASSERT_EQUAL_UINT64(0, initial_stats.used_bytes);
     TEST_ASSERT_EQUAL_UINT64(1, initial_stats.free_block_count);
     TEST_ASSERT_EQUAL_UINT64(initial_stats.free_bytes, initial_stats.largest_free_block);
+    TEST_ASSERT_EQUAL_UINT64(0, initial_stats.allocation_failures);
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 96, 16, &allocation));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_stats(&region, &allocated_stats));
@@ -285,6 +289,7 @@ static void test_allocator_stats_track_free_and_used_bytes(void)
     TEST_ASSERT_TRUE(allocated_stats.used_bytes > 0);
     TEST_ASSERT_TRUE(allocated_stats.free_block_count >= 1);
     TEST_ASSERT_TRUE(allocated_stats.largest_free_block <= allocated_stats.free_bytes);
+    TEST_ASSERT_EQUAL_UINT64(0, allocated_stats.allocation_failures);
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_free(&region, allocation));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_stats(&region, &freed_stats));
@@ -293,6 +298,44 @@ static void test_allocator_stats_track_free_and_used_bytes(void)
     TEST_ASSERT_EQUAL_UINT64(freed_stats.heap_size, freed_stats.free_bytes);
     TEST_ASSERT_TRUE(freed_stats.free_block_count >= 1);
     TEST_ASSERT_TRUE(freed_stats.largest_free_block <= freed_stats.free_bytes);
+    TEST_ASSERT_EQUAL_UINT64(0, freed_stats.allocation_failures);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies allocation-failure counters increase only on unsatisfied allocations.
+ */
+static void test_allocator_failure_counters_track_out_of_memory(void)
+{
+    char name[64];
+    ShmRegion region;
+    void *allocation;
+    uint64_t failure_count;
+    AllocatorStats stats;
+
+    make_region_name(name, sizeof(name), "alloc-failure-count");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_allocation_failures(&region, &failure_count));
+    TEST_ASSERT_EQUAL_UINT64(0, failure_count);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_alloc(&region, 32, 24, &allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_allocation_failures(&region, &failure_count));
+    TEST_ASSERT_EQUAL_UINT64(0, failure_count);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OUT_OF_MEMORY, allocator_alloc(&region, 1u << 20, 16, &allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_allocation_failures(&region, &failure_count));
+    TEST_ASSERT_EQUAL_UINT64(1, failure_count);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_stats(&region, &stats));
+    TEST_ASSERT_EQUAL_UINT64(1, stats.allocation_failures);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OUT_OF_MEMORY, allocator_alloc(&region, 1u << 20, 16, &allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_allocation_failures(&region, &failure_count));
+    TEST_ASSERT_EQUAL_UINT64(2, failure_count);
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
@@ -307,6 +350,7 @@ static void test_allocator_getters_reject_invalid_arguments(void)
     ShmRegion region;
     uint64_t heap_value;
     OffsetPtr head_value;
+    uint64_t failure_count;
     size_t allocation_span;
     unsigned char stack_byte;
 
@@ -316,6 +360,7 @@ static void test_allocator_getters_reject_invalid_arguments(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_heap_offset(NULL, &heap_value));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_heap_size(NULL, &heap_value));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_free_list_head(NULL, &head_value));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_allocation_failures(NULL, &failure_count));
     TEST_ASSERT_EQUAL_INT(
         OFFSET_STORE_STATUS_INVALID_ARGUMENT,
         allocator_get_allocation_span(NULL, &stack_byte, &allocation_span)
@@ -327,6 +372,7 @@ static void test_allocator_getters_reject_invalid_arguments(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_heap_offset(&region, NULL));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_heap_size(&region, NULL));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_free_list_head(&region, NULL));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_allocation_failures(&region, NULL));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_allocation_span(&region, NULL, &allocation_span));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_get_allocation_span(&region, &stack_byte, NULL));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_NOT_FOUND, allocator_get_allocation_span(&region, &stack_byte, &allocation_span));
@@ -376,6 +422,7 @@ int main(void)
     RUN_TEST(test_allocator_getters_report_consistent_state);
     RUN_TEST(test_allocator_getters_reject_invalid_arguments);
     RUN_TEST(test_allocator_stats_track_free_and_used_bytes);
+    RUN_TEST(test_allocator_failure_counters_track_out_of_memory);
     RUN_TEST(test_allocator_stats_reject_invalid_arguments);
     return UNITY_END();
 }

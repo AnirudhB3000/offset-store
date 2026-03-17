@@ -19,6 +19,8 @@ typedef struct {
     uint64_t heap_size;
     /** Free-list head stored as an offset pointer. */
     OffsetPtr free_list_head;
+    /** Cumulative count of allocation attempts that could not be satisfied. */
+    uint64_t allocation_failures;
 } AllocatorHeader;
 
 /**
@@ -251,6 +253,30 @@ OffsetStoreStatus allocator_get_free_list_head(const ShmRegion *region, OffsetPt
     return OFFSET_STORE_STATUS_OK;
 }
 
+/**
+ * @brief Returns the cumulative allocation-failure count recorded in allocator metadata.
+ *
+ * @param region Region descriptor to inspect.
+ * @param[out] out_failures Failure count on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus allocator_get_allocation_failures(const ShmRegion *region, uint64_t *out_failures)
+{
+    const AllocatorHeader *header;
+
+    if (region == NULL || out_failures == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    header = allocator_header(region);
+    if (!allocator_header_valid(region, header)) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    *out_failures = header->allocation_failures;
+    return OFFSET_STORE_STATUS_OK;
+}
+
 static bool allocator_header_valid(const ShmRegion *region, const AllocatorHeader *header)
 {
     if (region == NULL || header == NULL) {
@@ -356,6 +382,7 @@ OffsetStoreStatus allocator_get_stats(const ShmRegion *region, AllocatorStats *o
     out_stats->used_bytes = 0;
     out_stats->largest_free_block = 0;
     out_stats->free_block_count = 0;
+    out_stats->allocation_failures = header->allocation_failures;
 
     traversed = 0;
     while (traversed < header->heap_size) {
@@ -480,6 +507,7 @@ OffsetStoreStatus allocator_init(ShmRegion *region)
     header->heap_offset = heap_offset;
     header->heap_size = heap_size;
     header->free_list_head.offset = heap_offset;
+    header->allocation_failures = 0;
 
     initial_block_offset.offset = heap_offset;
     if (!allocator_block_from_offset(region, initial_block_offset, &initial_block)) {
@@ -676,6 +704,7 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
         current_offset = block->next_free;
     }
 
+    header->allocation_failures += 1;
     shm_region_unlock(region);
     return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
 }

@@ -116,6 +116,7 @@ Current implemented `shm_region` responsibilities:
 - store and validate a fixed private region header at the start of the mapping
 - initialize and expose a process-shared mutex stored in the region header
 - store a fixed-capacity named root table for well-known shared objects
+- store a fixed-capacity shared index table for general key-to-object discovery
 - expose region metadata through narrow query helpers plus data start and usable
   payload size
 - expose a public region-header validation entry point
@@ -232,6 +233,8 @@ Current implemented allocator behavior:
   now exposes small query helpers instead of the raw allocator header struct
 - `allocator_get_stats(...)` provides a snapshot of heap usage and free-space
   fragmentation by walking the current block layout at call time
+- allocator metadata now also tracks a cumulative `allocation_failures` counter
+  for requests that could not be satisfied from the current free space
 
 Allocator algorithm:
 
@@ -335,6 +338,27 @@ Root-table algorithm:
 This is intentionally not a hash table yet. The fixed array keeps layout and
 validation simple while still solving the immediate discovery problem.
 
+Current implemented shared-index behavior:
+
+- the private region header also contains a fixed-capacity index table
+- each index entry binds a short key to an `OffsetPtr`
+- index operations use linear scans under the region mutex
+- the index is meant for general small directories, while roots remain the
+  smaller set of well-known entry points
+
+Index algorithm:
+
+1. The private region header contains a fixed-capacity array of index entries.
+2. Each entry stores an occupancy flag, a short inline key, and an `OffsetPtr`.
+3. `offset_store_index_put(...)` locks the region, scans for an existing
+   matching key, and otherwise uses the first free slot.
+4. `offset_store_index_get(...)` locks the region, performs a linear scan for
+   the requested key, and returns the stored handle.
+5. `offset_store_index_contains(...)` locks the region and reports whether the
+   key is present.
+6. `offset_store_index_remove(...)` locks the region, clears the matching
+   entry, and resets its handle to null.
+
 ## Build And Debug Workflow
 
 Current build entry points:
@@ -392,10 +416,10 @@ Current accessor naming direction:
 Current allocator introspection direction:
 
 - `allocator_get_stats(...)` reports heap size, free bytes, used bytes, largest
-  free block, and free block count
+  free block, free block count, and cumulative allocation failures
 - stats are derived from a read-only heap walk rather than persistent shared
-  counters
-- allocation-failure counters are not yet tracked in shared metadata
+  counters, except for the persistent allocation-failure count stored in
+  allocator metadata
 
 ## API Usage
 
@@ -405,7 +429,9 @@ Recommended high-level create flow:
 2. Check the returned `OffsetStoreStatus`.
 3. Optionally call `offset_store_validate(...)` after setup when a caller wants an explicit integrity check.
 4. Allocate shared objects and bind well-known ones with `offset_store_set_root(...)` when cross-process discovery is needed.
-5. Call `offset_store_close(...)` when the process is done with the mapping.
+5. Use `offset_store_index_put(...)` when a caller needs a small shared
+   key/value directory rather than just a few well-known roots.
+6. Call `offset_store_close(...)` when the process is done with the mapping.
 
 Bootstrap algorithm:
 
@@ -423,7 +449,9 @@ Recommended high-level attach flow:
 2. Check the returned `OffsetStoreStatus`.
 3. Optionally call `offset_store_validate(...)` to verify the attached region and allocator state explicitly.
 4. Resolve well-known objects with `offset_store_get_root(...)` and then use their `OffsetPtr` handles.
-5. Call `offset_store_close(...)` when finished.
+5. Resolve indexed objects with `offset_store_index_get(...)` when they are
+   discovered through the shared directory rather than by root name.
+6. Call `offset_store_close(...)` when finished.
 
 Attach algorithm:
 

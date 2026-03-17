@@ -271,6 +271,179 @@ static void test_named_roots_replace_existing_binding_and_validate_input(void)
 }
 
 /**
+ * @brief Verifies that indexed entries can be stored, resolved, queried, and removed.
+ */
+static void test_index_round_trip(void)
+{
+    char name[64];
+    OffsetStore store;
+    OffsetPtr stored_object;
+    OffsetPtr resolved_object;
+    bool contains;
+
+    make_region_name(name, sizeof(name), "store-index-roundtrip");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&store, name, 4096));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&store.region, 13, 32, &stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_put(&store, "message-1", stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_contains(&store, "message-1", &contains)
+    );
+    TEST_ASSERT_TRUE(contains);
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_get(&store, "message-1", &resolved_object)
+    );
+    TEST_ASSERT_EQUAL_UINT64(stored_object.offset, resolved_object.offset);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_index_remove(&store, "message-1"));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_contains(&store, "message-1", &contains)
+    );
+    TEST_ASSERT_FALSE(contains);
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_NOT_FOUND,
+        offset_store_index_get(&store, "message-1", &resolved_object)
+    );
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&store));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies that indexed entries are visible to later attached processes.
+ */
+static void test_open_existing_observes_index_entries(void)
+{
+    char name[64];
+    OffsetStore creator;
+    OffsetStore attached;
+    OffsetPtr stored_object;
+    OffsetPtr resolved_object;
+
+    make_region_name(name, sizeof(name), "store-index-attach");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&creator, name, 4096));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&creator.region, 14, 48, &stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_put(&creator, "shared-1", stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_open_existing(&attached, name));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_get(&attached, "shared-1", &resolved_object)
+    );
+    TEST_ASSERT_EQUAL_UINT64(stored_object.offset, resolved_object.offset);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&attached));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&creator));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies index replacement, capacity limits, and input validation.
+ */
+static void test_index_replace_capacity_and_validate_input(void)
+{
+    char name[64];
+    char too_long_key[OFFSET_STORE_INDEX_KEY_LENGTH + 4];
+    OffsetStore store;
+    OffsetPtr first_object;
+    OffsetPtr second_object;
+    OffsetPtr temp_object;
+    OffsetPtr resolved_object;
+    bool contains;
+    char key[32];
+    int written;
+    size_t index;
+
+    memset(too_long_key, 'b', sizeof(too_long_key));
+    too_long_key[sizeof(too_long_key) - 1] = '\0';
+
+    make_region_name(name, sizeof(name), "store-index-validate");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&store, name, 8192));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&store.region, 15, 16, &first_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&store.region, 16, 16, &second_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_put(&store, "replaceable-1", first_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_put(&store, "replaceable-1", second_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_get(&store, "replaceable-1", &resolved_object)
+    );
+    TEST_ASSERT_EQUAL_UINT64(second_object.offset, resolved_object.offset);
+
+    for (index = 0; index < OFFSET_STORE_INDEX_CAPACITY - 1; ++index) {
+        written = snprintf(key, sizeof(key), "k%zu", index);
+        TEST_ASSERT_TRUE(written > 0);
+        TEST_ASSERT_TRUE((size_t) written < sizeof(key));
+        TEST_ASSERT_EQUAL_INT(
+            OFFSET_STORE_STATUS_OK,
+            object_store_alloc(&store.region, (uint32_t) (100 + index), 8, &temp_object)
+        );
+        TEST_ASSERT_EQUAL_INT(
+            OFFSET_STORE_STATUS_OK,
+            offset_store_index_put(&store, key, temp_object)
+        );
+    }
+
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&store.region, 999, 8, &temp_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OUT_OF_MEMORY,
+        offset_store_index_put(&store, "overflow-key", temp_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_INVALID_ARGUMENT,
+        offset_store_index_put(&store, too_long_key, second_object)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_INVALID_ARGUMENT,
+        offset_store_index_put(&store, "null-object-1", offset_ptr_null())
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_INVALID_ARGUMENT,
+        offset_store_index_contains(&store, "replaceable-1", NULL)
+    );
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        offset_store_index_contains(&store, "missing-1", &contains)
+    );
+    TEST_ASSERT_FALSE(contains);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&store));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Runs the store lifecycle unit tests.
  *
  * @return Zero on success.
@@ -286,5 +459,8 @@ int main(void)
     RUN_TEST(test_named_roots_round_trip);
     RUN_TEST(test_open_existing_observes_named_roots);
     RUN_TEST(test_named_roots_replace_existing_binding_and_validate_input);
+    RUN_TEST(test_index_round_trip);
+    RUN_TEST(test_open_existing_observes_index_entries);
+    RUN_TEST(test_index_replace_capacity_and_validate_input);
     return UNITY_END();
 }

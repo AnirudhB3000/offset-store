@@ -167,3 +167,70 @@ OffsetStoreStatus offset_store_remove_root(OffsetStore *store, const char *name)
 
     return shm_region_remove_root(&store->region, name);
 }
+
+/**
+ * @brief Stores or replaces an indexed entry in the shared region.
+ *
+ * @param store Store descriptor whose index should be updated.
+ * @param key Index key to create or replace.
+ * @param object Object handle to store.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_index_put(OffsetStore *store, const char *key, OffsetPtr object)
+{
+    if (store == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_index_put(&store->region, key, object);
+}
+
+/**
+ * @brief Resolves an indexed entry from the shared region.
+ *
+ * @param store Store descriptor whose index should be queried.
+ * @param key Index key to resolve.
+ * @param[out] out_object Stored object handle on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_index_get(OffsetStore *store, const char *key, OffsetPtr *out_object)
+{
+    if (store == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_index_get(&store->region, key, out_object);
+}
+
+/**
+ * @brief Returns whether an indexed entry is present in the shared region.
+ *
+ * @param store Store descriptor whose index should be queried.
+ * @param key Index key to test.
+ * @param[out] out_contains `true` if the key is present.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_index_contains(OffsetStore *store, const char *key, bool *out_contains)
+{
+    if (store == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_index_contains(&store->region, key, out_contains);
+}
+
+/**
+ * @brief Removes an indexed entry from the shared region.
+ *
+ * @param store Store descriptor whose index should be updated.
+ * @param key Index key to remove.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_index_remove(OffsetStore *store, const char *key)
+{
+    if (store == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_index_remove(&store->region, key);
+}

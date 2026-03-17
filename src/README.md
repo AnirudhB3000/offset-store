@@ -31,6 +31,7 @@ typedef struct {
     uint64_t total_size;
     pthread_mutex_t mutex;
     ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
+    ShmRegionIndexEntry index[OFFSET_STORE_INDEX_CAPACITY];
 } ShmRegionHeader;
 ```
 
@@ -44,6 +45,8 @@ Important points:
   coarse-grained synchronization primitive for allocator mutation
 - the header also contains a fixed-capacity inline root table for discovering
   well-known shared objects by stable names
+- the header also contains a fixed-capacity inline index table for general
+  key-to-object discovery without allocator recursion
 - attach paths validate `magic`, `version`, and `total_size` before the region
   is considered usable
 - callers now have both `shm_region_data(...)` and `shm_region_data_const(...)`
@@ -88,6 +91,7 @@ typedef struct {
     uint64_t heap_offset;
     uint64_t heap_size;
     OffsetPtr free_list_head;
+    uint64_t allocation_failures;
 } AllocatorHeader;
 ```
 
@@ -150,6 +154,11 @@ That prefix is the key to keeping `free(...)` address-independent. The allocator
 does not need to store a raw pointer to the owning block; it recovers the block
 later by reading the stored offset and resolving it relative to the current
 mapping base.
+
+If no free block can satisfy the request, the allocator increments the persistent
+`allocation_failures` counter in `AllocatorHeader` before returning
+`OFFSET_STORE_STATUS_OUT_OF_MEMORY`. Invalid-argument failures do not affect that
+counter.
 
 ### Free Path
 
@@ -289,6 +298,10 @@ That means the current consistency model is simple but limited:
 - `offset_store_set_root(...)`: store or replace a named root binding
 - `offset_store_get_root(...)`: resolve a named root to its stored object handle
 - `offset_store_remove_root(...)`: delete a named root binding
+- `offset_store_index_put(...)`: store or replace a general index binding
+- `offset_store_index_get(...)`: resolve a general index key to its stored handle
+- `offset_store_index_contains(...)`: check whether an index key is present
+- `offset_store_index_remove(...)`: delete a general index binding
 
 `OffsetStore` is process-local convenience state, not a shared-memory structure.
 It exists to reduce boilerplate in examples and common lifecycle code.
@@ -303,7 +316,6 @@ The current implementation is intentionally conservative:
 - one coarse-grained region mutex
 - first-fit allocation
 - no free-block coalescing
-- no object index
 - no crash recovery journal
 - no robust mutex handling after process death
 

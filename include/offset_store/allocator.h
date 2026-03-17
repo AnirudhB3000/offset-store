@@ -14,7 +14,7 @@
  */
 enum {
     /** Shared allocator layout version stored in private allocator metadata. */
-    OFFSET_STORE_ALLOCATOR_VERSION = 1,
+    OFFSET_STORE_ALLOCATOR_VERSION = 2,
     /** Flag indicating that a heap block is currently free. */
     OFFSET_STORE_ALLOCATOR_BLOCK_FREE = 1u
 };
@@ -37,6 +37,8 @@ typedef struct {
     uint64_t largest_free_block;
     /** Number of blocks currently on the free list. */
     uint64_t free_block_count;
+    /** Cumulative count of allocation attempts that could not be satisfied. */
+    uint64_t allocation_failures;
 } AllocatorStats;
 
 /**
@@ -104,6 +106,14 @@ OffsetStoreStatus allocator_get_heap_size(const ShmRegion *region, uint64_t *out
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus allocator_get_free_list_head(const ShmRegion *region, OffsetPtr *out_head);
+/**
+ * @brief Returns the cumulative allocation-failure count recorded by the allocator.
+ *
+ * @param region Region descriptor whose allocator should be inspected.
+ * @param[out] out_failures Failure count on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus allocator_get_allocation_failures(const ShmRegion *region, uint64_t *out_failures);
 /**
  * @brief Returns a snapshot of allocator usage and fragmentation statistics.
  *

@@ -5,6 +5,7 @@
 #include "offset_store/offset_ptr.h"
 #include "offset_store/shm_region.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 
 /**
@@ -92,5 +93,43 @@ OffsetStoreStatus offset_store_get_root(OffsetStore *store, const char *name, Of
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus offset_store_remove_root(OffsetStore *store, const char *name);
+/**
+ * @brief Stores or replaces an indexed entry in the shared region.
+ *
+ * Indexed entries provide a general fixed-capacity directory for shared object
+ * handles beyond the small set of well-known root names.
+ *
+ * @param store Store descriptor whose index should be updated.
+ * @param key Index key to create or replace.
+ * @param object Object handle to associate with the key.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_index_put(OffsetStore *store, const char *key, OffsetPtr object);
+/**
+ * @brief Resolves an indexed entry to its stored object handle.
+ *
+ * @param store Store descriptor whose index should be queried.
+ * @param key Index key to resolve.
+ * @param[out] out_object Stored object handle on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_index_get(OffsetStore *store, const char *key, OffsetPtr *out_object);
+/**
+ * @brief Returns whether an index key is currently present.
+ *
+ * @param store Store descriptor whose index should be queried.
+ * @param key Index key to test.
+ * @param[out] out_contains `true` if the key is present.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_index_contains(OffsetStore *store, const char *key, bool *out_contains);
+/**
+ * @brief Removes an indexed entry from the shared region.
+ *
+ * @param store Store descriptor whose index should be updated.
+ * @param key Index key to remove.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus offset_store_index_remove(OffsetStore *store, const char *key);
 
 #endif

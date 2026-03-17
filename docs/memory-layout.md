@@ -50,6 +50,7 @@ typedef struct {
     uint64_t total_size;
     pthread_mutex_t mutex;
     ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
+    ShmRegionIndexEntry index[OFFSET_STORE_INDEX_CAPACITY];
 } ShmRegionHeader;
 ```
 
@@ -62,6 +63,8 @@ Fields:
 - `mutex`: process-shared mutex protecting coarse-grained shared mutation
 - `roots`: fixed-capacity table of well-known object bindings stored as
   inline names plus `OffsetPtr` handles
+- `index`: fixed-capacity table of general key/object bindings stored as inline
+  keys plus `OffsetPtr` handles
 
 Behavior:
 
@@ -71,6 +74,9 @@ Behavior:
   `shm_region_unlock`
 - stores named root bindings used by `offset_store_set_root(...)`,
   `offset_store_get_root(...)`, and `offset_store_remove_root(...)`
+- stores shared index bindings used by `offset_store_index_put(...)`,
+  `offset_store_index_get(...)`, `offset_store_index_contains(...)`, and
+  `offset_store_index_remove(...)`
 
 Failure notes:
 
@@ -108,6 +114,34 @@ Rules:
 - empty names are rejected
 - lookups, replacements, and removals are mutex-protected
 
+### Index Entry Layout
+
+Each region index entry is kept private to `src/shm_region.c`, but the current
+layout is:
+
+```c
+typedef struct {
+    uint8_t in_use;
+    uint8_t reserved[7];
+    char key[OFFSET_STORE_INDEX_KEY_LENGTH];
+    OffsetPtr object;
+} ShmRegionIndexEntry;
+```
+
+Fields:
+
+- `in_use`: entry occupancy flag
+- `reserved`: padding reserved for future index-entry flags
+- `key`: null-terminated fixed-size index key buffer
+- `object`: stored object handle
+
+Rules:
+
+- the table capacity is fixed at `OFFSET_STORE_INDEX_CAPACITY`
+- keys must fit within `OFFSET_STORE_INDEX_KEY_LENGTH - 1` characters
+- empty keys are rejected
+- lookups, replacements, contains checks, and removals are mutex-protected
+
 ## Allocator Header
 
 The allocator stores an internal header immediately after `ShmRegionHeader`:
@@ -120,6 +154,7 @@ typedef struct {
     uint64_t heap_offset;
     uint64_t heap_size;
     OffsetPtr free_list_head;
+    uint64_t allocation_failures;
 } AllocatorHeader;
 ```
 
@@ -131,12 +166,16 @@ Fields:
 - `heap_offset`: byte offset from region base to the first heap block
 - `heap_size`: total bytes available in the heap area
 - `free_list_head`: offset to the first free block, or null if no free blocks remain
+- `allocation_failures`: cumulative count of allocation attempts that could not
+  be satisfied from the current heap state
 
 Behavior:
 
 - initialized by `allocator_init`
 - remains entirely in shared memory
 - points into the heap using `OffsetPtr`, never raw pointers
+- increments `allocation_failures` only for true out-of-memory or unsatisfied
+  allocation attempts, not for invalid-argument failures
 
 ## Heap Layout
 

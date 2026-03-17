@@ -41,7 +41,7 @@ typedef struct {
  * @brief Public region layout version stored in the shared header.
  */
 enum {
-    OFFSET_STORE_REGION_VERSION = 2
+    OFFSET_STORE_REGION_VERSION = 3
 };
 
 /**
@@ -55,6 +55,16 @@ enum {
     OFFSET_STORE_ROOT_CAPACITY = 16,
     /** Maximum root-name length including the terminating null byte. */
     OFFSET_STORE_ROOT_NAME_LENGTH = 32
+};
+
+/**
+ * @brief Fixed index-table limits stored in the private shared region header.
+ */
+enum {
+    /** Maximum number of indexed entries stored in one region. */
+    OFFSET_STORE_INDEX_CAPACITY = 32,
+    /** Maximum index-key length including the terminating null byte. */
+    OFFSET_STORE_INDEX_KEY_LENGTH = 32
 };
 
 /**
@@ -198,5 +208,49 @@ OffsetStoreStatus shm_region_get_root(ShmRegion *region, const char *name, Offse
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name);
+/**
+ * @brief Stores or replaces an indexed entry inside the shared region.
+ *
+ * This helper acquires the region mutex internally and updates the fixed index
+ * table stored in the private shared header.
+ *
+ * @param region Region descriptor whose index should be updated.
+ * @param key Index key to create or replace.
+ * @param object Offset handle stored for the key.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_put(ShmRegion *region, const char *key, OffsetPtr object);
+/**
+ * @brief Looks up an indexed entry inside the shared region.
+ *
+ * This helper acquires the region mutex internally before reading the fixed
+ * index table stored in the private shared header.
+ *
+ * @param region Region descriptor whose index should be queried.
+ * @param key Index key to resolve.
+ * @param[out] out_object Stored handle on success.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_get(ShmRegion *region, const char *key, OffsetPtr *out_object);
+/**
+ * @brief Returns whether an indexed entry is present in the shared region.
+ *
+ * @param region Region descriptor whose index should be queried.
+ * @param key Index key to test.
+ * @param[out] out_contains `true` if the key is present.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_contains(ShmRegion *region, const char *key, bool *out_contains);
+/**
+ * @brief Removes an indexed entry from the shared region.
+ *
+ * This helper acquires the region mutex internally before clearing the fixed
+ * index entry stored in the private shared header.
+ *
+ * @param region Region descriptor whose index should be updated.
+ * @param key Index key to remove.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_remove(ShmRegion *region, const char *key);
 
 #endif
