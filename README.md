@@ -385,6 +385,12 @@ Recommended debugging workflow:
 - the allocator test binary now includes a multi-process churn stress test that
   forks several workers, repeatedly allocates and frees varied payload sizes,
   and then checks allocator validation plus final heap stats in the parent
+- the store test binary now includes a roots/index reader-writer contention
+  stress test with concurrent writers and lookup readers to exercise the
+  current directory rwlock model under load
+- the store test binary also includes a mixed full-system stress test that
+  combines object allocation/free churn, root/index publication, concurrent
+  readers, and periodic validation/stat snapshots
 - attach `gdb` to the example binaries for step-by-step shared-memory inspection
 - run the test or example binaries under `valgrind` when investigating memory misuse
 - inspect `/dev/shm` to confirm POSIX shared-memory objects are being created and removed

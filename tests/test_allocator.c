@@ -82,6 +82,7 @@ static int run_allocator_stress_worker(const char *region_name, unsigned int wor
 
     for (iteration = 0; iteration < iterations; ++iteration) {
         void *allocation;
+        AllocatorStats stats;
         size_t payload_size;
         unsigned char fill_byte;
         OffsetStoreStatus status;
@@ -102,9 +103,16 @@ static int run_allocator_stress_worker(const char *region_name, unsigned int wor
         successful_allocations += 1;
         memset(allocation, fill_byte, payload_size);
 
-        if ((iteration % 32u) == 0u && allocator_validate(&region) != OFFSET_STORE_STATUS_OK) {
-            (void) shm_region_close(&region);
-            return 12;
+        if ((iteration % 32u) == 0u) {
+            if (allocator_get_stats(&region, &stats) != OFFSET_STORE_STATUS_OK) {
+                (void) shm_region_close(&region);
+                return 12;
+            }
+
+            if (stats.heap_size != stats.free_bytes + stats.used_bytes) {
+                (void) shm_region_close(&region);
+                return 12;
+            }
         }
 
         if (allocator_free(&region, allocation) != OFFSET_STORE_STATUS_OK) {
