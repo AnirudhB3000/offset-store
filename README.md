@@ -382,6 +382,9 @@ Example flow:
 Recommended debugging workflow:
 
 - use `make test` as the baseline correctness check
+- the allocator test binary now includes a multi-process churn stress test that
+  forks several workers, repeatedly allocates and frees varied payload sizes,
+  and then checks allocator validation plus final heap stats in the parent
 - attach `gdb` to the example binaries for step-by-step shared-memory inspection
 - run the test or example binaries under `valgrind` when investigating memory misuse
 - inspect `/dev/shm` to confirm POSIX shared-memory objects are being created and removed

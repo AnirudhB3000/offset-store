@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "unity.h"
@@ -41,6 +42,92 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     written = snprintf(buffer, buffer_size, "/offset-store-%ld-%s", (long) getpid(), suffix);
     TEST_ASSERT_TRUE(written > 0);
     TEST_ASSERT_TRUE((size_t) written < buffer_size);
+}
+
+/**
+ * @brief Returns one payload size for the allocator churn stress test.
+ *
+ * @param worker_index Zero-based worker identifier.
+ * @param iteration Zero-based loop iteration.
+ * @return Deterministic payload size in bytes.
+ */
+static size_t allocator_stress_size_for(unsigned int worker_index, unsigned int iteration)
+{
+    static const size_t sizes[] = {16u, 24u, 32u, 48u, 64u, 80u, 96u, 112u, 128u, 160u};
+    size_t size_count;
+
+    size_count = sizeof(sizes) / sizeof(sizes[0]);
+    return sizes[(worker_index + iteration) % size_count];
+}
+
+/**
+ * @brief Executes allocator churn work inside one child process.
+ *
+ * @param region_name Shared-memory region name to open.
+ * @param worker_index Zero-based worker identifier.
+ * @param iterations Number of allocation/free iterations to run.
+ * @return Process exit code for the child worker.
+ */
+static int run_allocator_stress_worker(const char *region_name, unsigned int worker_index, unsigned int iterations)
+{
+    ShmRegion region;
+    unsigned int iteration;
+    unsigned int successful_allocations;
+
+    if (shm_region_open(&region, region_name) != OFFSET_STORE_STATUS_OK) {
+        return 10;
+    }
+
+    successful_allocations = 0;
+
+    for (iteration = 0; iteration < iterations; ++iteration) {
+        void *allocation;
+        size_t payload_size;
+        unsigned char fill_byte;
+        OffsetStoreStatus status;
+
+        payload_size = allocator_stress_size_for(worker_index, iteration);
+        fill_byte = (unsigned char) (0x20u + ((worker_index + iteration) % 0x40u));
+
+        status = allocator_alloc(&region, payload_size, 16u, &allocation);
+        if (status == OFFSET_STORE_STATUS_OUT_OF_MEMORY) {
+            continue;
+        }
+
+        if (status != OFFSET_STORE_STATUS_OK) {
+            (void) shm_region_close(&region);
+            return 11;
+        }
+
+        successful_allocations += 1;
+        memset(allocation, fill_byte, payload_size);
+
+        if ((iteration % 32u) == 0u && allocator_validate(&region) != OFFSET_STORE_STATUS_OK) {
+            (void) shm_region_close(&region);
+            return 12;
+        }
+
+        if (allocator_free(&region, allocation) != OFFSET_STORE_STATUS_OK) {
+            (void) shm_region_close(&region);
+            return 13;
+        }
+    }
+
+    if (successful_allocations == 0u) {
+        (void) shm_region_close(&region);
+        return 16;
+    }
+
+    if (allocator_validate(&region) != OFFSET_STORE_STATUS_OK) {
+        (void) shm_region_close(&region);
+        return 14;
+    }
+
+    if (shm_region_close(&region) != OFFSET_STORE_STATUS_OK) {
+        return 15;
+    }
+
+    return 0;
 }
 
 /**
@@ -405,6 +492,68 @@ static void test_allocator_stats_reject_invalid_arguments(void)
 }
 
 /**
+ * @brief Verifies allocator integrity after multi-process allocation churn.
+ */
+static void test_allocator_churn_stress_multi_process(void)
+{
+    enum {
+        worker_count = 4,
+        iterations_per_worker = 512,
+        region_size = 1u << 15
+    };
+
+    char name[64];
+    ShmRegion region;
+    pid_t children[worker_count];
+    unsigned int index;
+    AllocatorStats stats;
+
+    make_region_name(name, sizeof(name), "alloc-stress");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, region_size));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+
+    for (index = 0; index < worker_count; ++index) {
+        pid_t child_pid;
+
+        child_pid = fork();
+        TEST_ASSERT_TRUE(child_pid >= 0);
+        if (child_pid == 0) {
+            _exit(run_allocator_stress_worker(name, index, iterations_per_worker));
+        }
+
+        children[index] = child_pid;
+    }
+
+    for (index = 0; index < worker_count; ++index) {
+        int child_status;
+        pid_t waited_pid;
+
+        waited_pid = waitpid(children[index], &child_status, 0);
+        TEST_ASSERT_EQUAL_INT(children[index], waited_pid);
+        TEST_ASSERT_TRUE(WIFEXITED(child_status));
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            0,
+            WEXITSTATUS(child_status),
+            "allocator stress worker exited with failure"
+        );
+    }
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_validate(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_get_stats(&region, &stats));
+    TEST_ASSERT_EQUAL_UINT64(stats.heap_size, stats.free_bytes + stats.used_bytes);
+    TEST_ASSERT_EQUAL_UINT64(0, stats.used_bytes);
+    TEST_ASSERT_EQUAL_UINT64(stats.heap_size, stats.free_bytes);
+    TEST_ASSERT_TRUE(stats.free_block_count >= 1u);
+    TEST_ASSERT_TRUE(stats.largest_free_block <= stats.free_bytes);
+    TEST_ASSERT_TRUE(stats.allocation_failures <= (uint64_t) worker_count * (uint64_t) iterations_per_worker);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Runs the allocator unit tests.
  *
  * @return Zero on success.
@@ -424,5 +573,6 @@ int main(void)
     RUN_TEST(test_allocator_stats_track_free_and_used_bytes);
     RUN_TEST(test_allocator_failure_counters_track_out_of_memory);
     RUN_TEST(test_allocator_stats_reject_invalid_arguments);
+    RUN_TEST(test_allocator_churn_stress_multi_process);
     return UNITY_END();
 }
