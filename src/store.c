@@ -40,6 +40,11 @@ OffsetStoreStatus offset_store_bootstrap(OffsetStore *store, const char *name, s
         return status;
     }
 
+    /*
+     * Bootstrap currently touches only one subsystem lock at a time: region
+     * creation initializes the shared mutex set, then allocator_init takes the
+     * allocator mutex without nesting root or index publication work.
+     */
     status = allocator_init(&store->region);
     if (status != OFFSET_STORE_STATUS_OK) {
         shm_region_close(&store->region);
@@ -72,6 +77,11 @@ OffsetStoreStatus offset_store_open_existing(OffsetStore *store, const char *nam
         return status;
     }
 
+    /*
+     * Open and validation remain single-subsystem today. They validate region
+     * metadata and allocator structure without acquiring multiple subsystem
+     * locks at once.
+     */
     status = allocator_validate(&store->region);
     if (status != OFFSET_STORE_STATUS_OK) {
         shm_region_close(&store->region);

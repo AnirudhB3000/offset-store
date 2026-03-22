@@ -1,7 +1,7 @@
 # Memory Layout
 
-This document describes the current `v0.1.1` shared-memory layout implemented in
-the repository. It focuses on the actual bytes stored in the shared region rather
+This document describes the current shared-memory layout implemented in the
+repository. It focuses on the actual bytes stored in the shared region rather
 than the process-local helper structures used to access them.
 
 Interpret the structure snippets in this document as layout documentation first.
@@ -48,7 +48,9 @@ typedef struct {
     uint32_t version;
     uint32_t reserved;
     uint64_t total_size;
-    pthread_mutex_t mutex;
+    pthread_mutex_t allocator_mutex;
+    pthread_rwlock_t roots_rwlock;
+    pthread_rwlock_t index_rwlock;
     ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
     ShmRegionIndexEntry index[OFFSET_STORE_INDEX_CAPACITY];
 } ShmRegionHeader;
@@ -60,7 +62,9 @@ Fields:
 - `version`: region layout version
 - `reserved`: padding/reserved space for future use
 - `total_size`: full mapped region size in bytes
-- `mutex`: process-shared mutex protecting coarse-grained shared mutation
+- `allocator_mutex`: process-shared mutex protecting allocator metadata and heap mutation
+- `roots_rwlock`: process-shared rwlock protecting the fixed root table
+- `index_rwlock`: process-shared rwlock protecting the fixed index table
 - `roots`: fixed-capacity table of well-known object bindings stored as
   inline names plus `OffsetPtr` handles
 - `index`: fixed-capacity table of general key/object bindings stored as inline
@@ -70,8 +74,10 @@ Behavior:
 
 - initialized by `shm_region_create`
 - validated by `shm_region_open`
-- used by allocator mutation paths through `shm_region_lock` and
-  `shm_region_unlock`
+- re-checked by `shm_region_validate(...)`, which verifies that all subsystem
+  synchronization primitives appear operational
+- used by allocator mutation paths through `shm_region_allocator_lock(...)` and
+  `shm_region_allocator_unlock(...)`
 - stores named root bindings used by `offset_store_set_root(...)`,
   `offset_store_get_root(...)`, and `offset_store_remove_root(...)`
 - stores shared index bindings used by `offset_store_index_put(...)`,
@@ -81,8 +87,8 @@ Behavior:
 Failure notes:
 
 - if the header is corrupted, `shm_region_open` rejects the mapping
-- the mutex is process-shared but not yet configured as robust, so crash recovery
-  is still a future concern
+- the allocator mutex and roots/index rwlocks are process-shared but not yet configured as robust, so crash
+  recovery is still a future concern
 - roots are not automatically invalidated when the pointed-to object is freed, so
   callers must keep object lifetime and root bindings consistent
 
@@ -112,7 +118,8 @@ Rules:
 - the table capacity is fixed at `OFFSET_STORE_ROOT_CAPACITY`
 - names must fit within `OFFSET_STORE_ROOT_NAME_LENGTH - 1` characters
 - empty names are rejected
-- lookups, replacements, and removals are mutex-protected
+- lookups use `roots_rwlock` in read mode
+- replacements and removals use `roots_rwlock` in write mode
 
 ### Index Entry Layout
 
@@ -140,7 +147,8 @@ Rules:
 - the table capacity is fixed at `OFFSET_STORE_INDEX_CAPACITY`
 - keys must fit within `OFFSET_STORE_INDEX_KEY_LENGTH - 1` characters
 - empty keys are rejected
-- lookups, replacements, contains checks, and removals are mutex-protected
+- lookups and contains checks use `index_rwlock` in read mode
+- replacements and removals use `index_rwlock` in write mode
 
 ## Allocator Header
 
@@ -299,11 +307,11 @@ For caller-side sequencing and error handling, see the `API Usage` section in
 
 ## Current Locking Scope
 
-The current mutex scope is coarse-grained:
+The current locking model is split by subsystem:
 
-- `allocator_init`
-- `allocator_alloc`
-- `allocator_free`
+- `allocator_mutex`: `allocator_init`, `allocator_alloc`, `allocator_free`
+- `roots_rwlock`: root-table lookup in read mode, put/remove in write mode
+- `index_rwlock`: index lookup/contains in read mode, put/remove in write mode
 
 The following public APIs do not lock internally:
 
@@ -313,12 +321,17 @@ The following public APIs do not lock internally:
 - `object_store_get_header_mut(...)`
 - `object_store_get_payload_const(...)`
 - `object_store_get_payload(...)`
-- `shm_region` metadata/query helpers other than `shm_region_lock(...)` and
-  `shm_region_unlock(...)`
+- `shm_region` metadata/query helpers other than the explicit subsystem lock
+  helpers
 
 That means callers must arrange external synchronization if they need a stable
 view while another process might allocate, free, or mutate shared objects.
 
-This keeps the design simple for the current implementation. Future versions may
-replace it with a more granular design once the object graph and indexing layers
-exist.
+There is no multi-lock public operation yet, so the current implementation does
+not require nested lock acquisition in public flows.
+
+If a future path needs more than one subsystem lock, the canonical order is:
+
+- `allocator_mutex`
+- `roots_rwlock`
+- `index_rwlock`

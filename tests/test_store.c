@@ -3,8 +3,10 @@
 #include "offset_store/object_store.h"
 #include "offset_store/store.h"
 
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "unity.h"
@@ -444,6 +446,77 @@ static void test_index_replace_capacity_and_validate_input(void)
 }
 
 /**
+ * @brief Verifies that root and index publication are independent from the allocator lock.
+ */
+static void test_root_and_index_updates_do_not_block_on_allocator_lock(void)
+{
+    char name[64];
+    int pipe_fds[2];
+    pid_t child_pid;
+    OffsetStore creator;
+    OffsetPtr stored_object;
+    struct pollfd poll_fd;
+    char signal_buffer[2];
+    int status;
+
+    make_region_name(name, sizeof(name), "store-subsystem-locks");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(0, pipe(pipe_fds));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_bootstrap(&creator, name, 8192));
+    TEST_ASSERT_EQUAL_INT(
+        OFFSET_STORE_STATUS_OK,
+        object_store_alloc(&creator.region, 17, 32, &stored_object)
+    );
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_allocator_lock(&creator.region));
+
+    child_pid = fork();
+    TEST_ASSERT_TRUE(child_pid >= 0);
+    if (child_pid == 0) {
+        OffsetStore attached;
+
+        close(pipe_fds[0]);
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_open_existing(&attached, name));
+        TEST_ASSERT_EQUAL_INT(
+            OFFSET_STORE_STATUS_OK,
+            offset_store_set_root(&attached, "shared-root", stored_object)
+        );
+        TEST_ASSERT_EQUAL_INT(
+            OFFSET_STORE_STATUS_OK,
+            offset_store_index_put(&attached, "shared-index", stored_object)
+        );
+        signal_buffer[0] = 'r';
+        signal_buffer[1] = 'i';
+        TEST_ASSERT_EQUAL_INT(2, write(pipe_fds[1], signal_buffer, sizeof(signal_buffer)));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&attached));
+        close(pipe_fds[1]);
+        _exit(0);
+    }
+
+    close(pipe_fds[1]);
+    poll_fd.fd = pipe_fds[0];
+    poll_fd.events = POLLIN;
+
+    /*
+     * Root and index updates should use their own subsystem mutexes, so the
+     * child should complete even while the allocator mutex is still held.
+     */
+    TEST_ASSERT_EQUAL_INT(1, poll(&poll_fd, 1, 1000));
+    TEST_ASSERT_EQUAL_INT(2, read(pipe_fds[0], signal_buffer, sizeof(signal_buffer)));
+    TEST_ASSERT_EQUAL_CHAR('r', signal_buffer[0]);
+    TEST_ASSERT_EQUAL_CHAR('i', signal_buffer[1]);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_allocator_unlock(&creator.region));
+    TEST_ASSERT_EQUAL_INT(child_pid, waitpid(child_pid, &status, 0));
+    TEST_ASSERT_TRUE(WIFEXITED(status));
+    TEST_ASSERT_EQUAL_INT(0, WEXITSTATUS(status));
+
+    close(pipe_fds[0]);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&creator));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Runs the store lifecycle unit tests.
  *
  * @return Zero on success.
@@ -462,5 +535,6 @@ int main(void)
     RUN_TEST(test_index_round_trip);
     RUN_TEST(test_open_existing_observes_index_entries);
     RUN_TEST(test_index_replace_capacity_and_validate_input);
+    RUN_TEST(test_root_and_index_updates_do_not_block_on_allocator_lock);
     return UNITY_END();
 }

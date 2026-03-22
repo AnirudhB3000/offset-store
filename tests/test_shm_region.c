@@ -160,6 +160,81 @@ static void test_region_validate_reports_header_integrity(void)
 }
 
 /**
+ * @brief Verifies that region validation accepts a region while a subsystem lock is held.
+ */
+static void test_region_validate_accepts_busy_subsystem_lock(void)
+{
+    char name[64];
+    ShmRegion region;
+
+    make_region_name(name, sizeof(name), "validate-busy");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_roots_lock(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_validate(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_roots_unlock(&region));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies that process-shared roots read locks allow parallel readers.
+ */
+static void test_process_shared_roots_read_lock_allows_parallel_readers(void)
+{
+    char name[64];
+    int pipe_fds[2];
+    pid_t child_pid;
+    ShmRegion region;
+    struct pollfd poll_fd;
+    char signal_byte;
+    int status;
+
+    make_region_name(name, sizeof(name), "roots-read-lock");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(0, pipe(pipe_fds));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_roots_read_lock(&region));
+
+    child_pid = fork();
+    TEST_ASSERT_TRUE(child_pid >= 0);
+    if (child_pid == 0) {
+        ShmRegion child_region;
+
+        close(pipe_fds[0]);
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_open(&child_region, name));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_roots_read_lock(&child_region));
+        signal_byte = 'r';
+        TEST_ASSERT_EQUAL_INT(1, write(pipe_fds[1], &signal_byte, 1));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_roots_unlock(&child_region));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&child_region));
+        close(pipe_fds[1]);
+        _exit(0);
+    }
+
+    close(pipe_fds[1]);
+    poll_fd.fd = pipe_fds[0];
+    poll_fd.events = POLLIN;
+
+    /* A second reader should proceed immediately while the parent still holds a read lock. */
+    TEST_ASSERT_EQUAL_INT(1, poll(&poll_fd, 1, 1000));
+    TEST_ASSERT_EQUAL_INT(1, read(pipe_fds[0], &signal_byte, 1));
+    TEST_ASSERT_EQUAL_CHAR('r', signal_byte);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_roots_unlock(&region));
+    TEST_ASSERT_EQUAL_INT(child_pid, waitpid(child_pid, &status, 0));
+    TEST_ASSERT_TRUE(WIFEXITED(status));
+    TEST_ASSERT_EQUAL_INT(0, WEXITSTATUS(status));
+
+    close(pipe_fds[0]);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Verifies that region creation rejects sizes smaller than the header.
  */
 static void test_create_rejects_too_small_region(void)
@@ -176,9 +251,9 @@ static void test_create_rejects_too_small_region(void)
 }
 
 /**
- * @brief Verifies that the process-shared mutex serializes access across processes.
+ * @brief Verifies that the allocator mutex serializes access across processes.
  */
-static void test_process_shared_mutex_coordinates_access(void)
+static void test_process_shared_allocator_mutex_coordinates_access(void)
 {
     char name[64];
     int pipe_fds[2];
@@ -197,7 +272,7 @@ static void test_process_shared_mutex_coordinates_access(void)
     data = (unsigned char *) shm_region_data(&region);
     TEST_ASSERT_NOT_NULL(data);
     data[0] = 0;
-    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_lock(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_allocator_lock(&region));
 
     child_pid = fork();
     TEST_ASSERT_TRUE(child_pid >= 0);
@@ -207,13 +282,13 @@ static void test_process_shared_mutex_coordinates_access(void)
 
         close(pipe_fds[0]);
         TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_open(&child_region, name));
-        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_lock(&child_region));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_allocator_lock(&child_region));
         child_data = (unsigned char *) shm_region_data(&child_region);
         TEST_ASSERT_NOT_NULL(child_data);
         child_data[0] = 1;
         signal_byte = 'x';
         TEST_ASSERT_EQUAL_INT(1, write(pipe_fds[1], &signal_byte, 1));
-        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlock(&child_region));
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_allocator_unlock(&child_region));
         TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&child_region));
         close(pipe_fds[1]);
         _exit(0);
@@ -227,7 +302,7 @@ static void test_process_shared_mutex_coordinates_access(void)
     TEST_ASSERT_EQUAL_INT(0, poll(&poll_fd, 1, 100));
     TEST_ASSERT_EQUAL_UINT8(0, data[0]);
 
-    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlock(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_allocator_unlock(&region));
     TEST_ASSERT_EQUAL_INT(1, poll(&poll_fd, 1, 1000));
     TEST_ASSERT_EQUAL_INT(1, read(pipe_fds[0], &signal_byte, 1));
     TEST_ASSERT_EQUAL_CHAR('x', signal_byte);
@@ -299,8 +374,10 @@ int main(void)
     RUN_TEST(test_open_observes_existing_mapping);
     RUN_TEST(test_open_rejects_invalid_header);
     RUN_TEST(test_region_validate_reports_header_integrity);
+    RUN_TEST(test_region_validate_accepts_busy_subsystem_lock);
+    RUN_TEST(test_process_shared_roots_read_lock_allows_parallel_readers);
     RUN_TEST(test_create_rejects_too_small_region);
-    RUN_TEST(test_process_shared_mutex_coordinates_access);
+    RUN_TEST(test_process_shared_allocator_mutex_coordinates_access);
     RUN_TEST(test_const_data_accessor);
     RUN_TEST(test_region_getters_reject_invalid_arguments);
     return UNITY_END();

@@ -29,7 +29,9 @@ typedef struct {
     uint32_t version;
     uint32_t reserved;
     uint64_t total_size;
-    pthread_mutex_t mutex;
+    pthread_mutex_t allocator_mutex;
+    pthread_rwlock_t roots_rwlock;
+    pthread_rwlock_t index_rwlock;
     ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
     ShmRegionIndexEntry index[OFFSET_STORE_INDEX_CAPACITY];
 } ShmRegionHeader;
@@ -41,8 +43,10 @@ Important points:
   attached processes
 - the public `ShmRegion` struct is process-local and must never be stored in the
   mapping
-- the mutex is configured with `PTHREAD_PROCESS_SHARED` and provides the current
-  coarse-grained synchronization primitive for allocator mutation
+- the allocator mutex and roots/index rwlocks are configured with `PTHREAD_PROCESS_SHARED`
+- allocator mutation uses `allocator_mutex`
+- root-table operations use `roots_rwlock`
+- shared-index operations use `index_rwlock`
 - the header also contains a fixed-capacity inline root table for discovering
   well-known shared objects by stable names
 - the header also contains a fixed-capacity inline index table for general
@@ -53,6 +57,10 @@ Important points:
   so read-only access does not require casting away const intent
 - `shm_region_validate(...)` now exposes the private header integrity check as a
   public status-returning helper
+- `shm_region_validate(...)` also verifies that the allocator mutex and the
+  roots/index rwlocks are operational
+- if a future operation ever needs more than one subsystem lock, the canonical
+  order is allocator, then roots, then index
 
 This module deliberately keeps the shared header typedef private so callers
 cannot accidentally depend on its binary layout in public code.
@@ -125,8 +133,8 @@ the entire heap. Initialization is currently strict one-shot behavior:
 - a valid existing allocator header causes `OFFSET_STORE_STATUS_ALREADY_EXISTS`
 - an undersized region causes `OFFSET_STORE_STATUS_OUT_OF_MEMORY`
 
-The function takes the region mutex internally before mutating shared allocator
-state.
+The function takes the allocator mutex internally before mutating shared
+allocator state.
 
 ### Allocation Path
 
@@ -184,7 +192,7 @@ repair damage.
 
 ### Locking
 
-The allocator currently acquires the region mutex internally in:
+The allocator currently acquires the allocator mutex internally in:
 
 - `allocator_init(...)`
 - `allocator_alloc(...)`
@@ -202,7 +210,7 @@ call time instead of maintaining persistent counters in shared metadata.
 The same rule extends to object-store accessors. Functions such as
 `object_store_get_header(...)`, `object_store_get_header_mut(...)`,
 `object_store_get_payload_const(...)`, and `object_store_get_payload(...)`
-perform validation but do not acquire the region mutex themselves.
+perform validation but do not acquire the allocator mutex themselves.
 
 ## `object_store.c`
 
@@ -280,7 +288,7 @@ accessors do not acquire the mutex.
 
 That means the current consistency model is simple but limited:
 
-- allocation and free are serialized by the region mutex
+- allocation and free are serialized by the allocator mutex
 - object reads are only as stable as the caller's external synchronization
 - concurrent mutation of an object's payload is a caller-level concern today
 - concurrent allocator mutation or object free can invalidate a previously
@@ -306,6 +314,12 @@ That means the current consistency model is simple but limited:
 `OffsetStore` is process-local convenience state, not a shared-memory structure.
 It exists to reduce boilerplate in examples and common lifecycle code.
 
+Current store-level flows remain single-subsystem:
+
+- bootstrap initializes the region header and then takes only the allocator lock
+- open/validate check region and allocator state without nested subsystem locks
+- root and index publication helpers each stay within their own subsystem lock
+
 For recommended caller-side sequencing and error-handling patterns, see the
 `API Usage` section in [`README.md`](/home/aniru/offset-store/README.md).
 
@@ -313,11 +327,11 @@ For recommended caller-side sequencing and error-handling patterns, see the
 
 The current implementation is intentionally conservative:
 
-- one coarse-grained region mutex
+- one allocator mutex plus rwlocks for the roots and index subsystems
 - first-fit allocation
 - no free-block coalescing
 - no crash recovery journal
-- no robust mutex handling after process death
+- no robust handling for the allocator mutex or the roots/index rwlocks after process death
 
 Those tradeoffs keep the layout deterministic and the code inspectable, which is
 consistent with the repository's stated learning and experimentation goals.

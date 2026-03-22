@@ -62,8 +62,12 @@ typedef struct {
     uint32_t reserved;
     /** Total mapped size in bytes. */
     uint64_t total_size;
-    /** Process-shared mutex protecting coarse-grained shared mutation. */
-    pthread_mutex_t mutex;
+    /** Process-shared mutex protecting allocator metadata and heap mutation. */
+    pthread_mutex_t allocator_mutex;
+    /** Process-shared rwlock protecting the fixed root table. */
+    pthread_rwlock_t roots_rwlock;
+    /** Process-shared rwlock protecting the fixed index table. */
+    pthread_rwlock_t index_rwlock;
     /** Fixed-capacity root table for well-known shared objects. */
     ShmRegionRootEntry roots[OFFSET_STORE_ROOT_CAPACITY];
     /** Fixed-capacity index table for general shared object discovery. */
@@ -161,6 +165,60 @@ static bool shm_region_validate_header(const ShmRegion *region)
 }
 
 /**
+ * @brief Returns whether a process-shared mutex appears operational.
+ *
+ * A successful `trylock` proves the mutex can be acquired and released. `EBUSY`
+ * also indicates a valid initialized mutex that is currently owned elsewhere.
+ *
+ * @param mutex Shared mutex to validate.
+ * @return true if the mutex appears initialized and usable.
+ * @return false otherwise.
+ */
+static bool shm_region_validate_mutex(pthread_mutex_t *mutex)
+{
+    int result;
+
+    if (mutex == NULL) {
+        return false;
+    }
+
+    result = pthread_mutex_trylock(mutex);
+    if (result == 0) {
+        return pthread_mutex_unlock(mutex) == 0;
+    }
+
+    return result == EBUSY;
+}
+
+/**
+ * @brief Returns whether a process-shared rwlock appears operational.
+ *
+ * A successful `trywrlock` proves the rwlock can be acquired and released.
+ * `EBUSY` indicates a valid initialized rwlock that is currently held.
+ * `EDEADLK` is also treated as operational because it indicates the current
+ * thread already holds an incompatible lock on the same initialized rwlock.
+ *
+ * @param rwlock Shared rwlock to validate.
+ * @return true if the rwlock appears initialized and usable.
+ * @return false otherwise.
+ */
+static bool shm_region_validate_rwlock(pthread_rwlock_t *rwlock)
+{
+    int result;
+
+    if (rwlock == NULL) {
+        return false;
+    }
+
+    result = pthread_rwlock_trywrlock(rwlock);
+    if (result == 0) {
+        return pthread_rwlock_unlock(rwlock) == 0;
+    }
+
+    return result == EBUSY || result == EDEADLK;
+}
+
+/**
  * @brief Validates the private shared region header for an attached mapping.
  *
  * @param region Region descriptor to validate.
@@ -168,13 +226,28 @@ static bool shm_region_validate_header(const ShmRegion *region)
  */
 OffsetStoreStatus shm_region_validate(const ShmRegion *region)
 {
+    ShmRegionHeader *header;
+
     if (region == NULL) {
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    return shm_region_validate_header(region)
-        ? OFFSET_STORE_STATUS_OK
-        : OFFSET_STORE_STATUS_INVALID_STATE;
+    if (!shm_region_validate_header(region)) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    header = (ShmRegionHeader *) region->base;
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    if (!shm_region_validate_mutex(&header->allocator_mutex) ||
+        !shm_region_validate_rwlock(&header->roots_rwlock) ||
+        !shm_region_validate_rwlock(&header->index_rwlock)) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    return OFFSET_STORE_STATUS_OK;
 }
 
 /**
@@ -437,11 +510,11 @@ static void shm_region_init_index(ShmRegionHeader *header)
  * @param header Shared region header to initialize.
  * @return Status code describing success or failure.
  */
-static OffsetStoreStatus shm_region_init_mutex(ShmRegionHeader *header)
+static OffsetStoreStatus shm_region_init_one_mutex(pthread_mutex_t *mutex)
 {
     pthread_mutexattr_t attr;
 
-    if (header == NULL) {
+    if (mutex == NULL) {
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
@@ -454,13 +527,72 @@ static OffsetStoreStatus shm_region_init_mutex(ShmRegionHeader *header)
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
-    if (pthread_mutex_init(&header->mutex, &attr) != 0) {
+    if (pthread_mutex_init(mutex, &attr) != 0) {
         pthread_mutexattr_destroy(&attr);
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     pthread_mutexattr_destroy(&attr);
     return OFFSET_STORE_STATUS_OK;
+}
+
+/**
+ * @brief Initializes one process-shared rwlock stored in the region header.
+ *
+ * @param rwlock Shared rwlock to initialize.
+ * @return Status code describing success or failure.
+ */
+static OffsetStoreStatus shm_region_init_one_rwlock(pthread_rwlock_t *rwlock)
+{
+    pthread_rwlockattr_t attr;
+
+    if (rwlock == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (pthread_rwlockattr_init(&attr) != 0) {
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+    if (pthread_rwlockattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) != 0) {
+        pthread_rwlockattr_destroy(&attr);
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+    if (pthread_rwlock_init(rwlock, &attr) != 0) {
+        pthread_rwlockattr_destroy(&attr);
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+    pthread_rwlockattr_destroy(&attr);
+    return OFFSET_STORE_STATUS_OK;
+}
+
+/**
+ * @brief Initializes the shared subsystem synchronization primitives stored in the region header.
+ *
+ * @param header Shared region header to initialize.
+ * @return Status code describing success or failure.
+ */
+static OffsetStoreStatus shm_region_init_mutexes(ShmRegionHeader *header)
+{
+    OffsetStoreStatus status;
+
+    if (header == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    status = shm_region_init_one_mutex(&header->allocator_mutex);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    status = shm_region_init_one_rwlock(&header->roots_rwlock);
+    if (status != OFFSET_STORE_STATUS_OK) {
+        return status;
+    }
+
+    return shm_region_init_one_rwlock(&header->index_rwlock);
 }
 
 /**
@@ -515,7 +647,7 @@ OffsetStoreStatus shm_region_create(ShmRegion *out_region, const char *name, siz
     header->total_size = (uint64_t) out_region->size;
     shm_region_init_roots(header);
     shm_region_init_index(header);
-    status = shm_region_init_mutex(header);
+    status = shm_region_init_mutexes(header);
     if (status != OFFSET_STORE_STATUS_OK) {
         shm_region_close(out_region);
         shm_unlink(name);
@@ -617,25 +749,18 @@ OffsetStoreStatus shm_region_unlink(const char *name)
 }
 
 /**
- * @brief Acquires the region's shared mutex.
+ * @brief Acquires one process-shared mutex stored in the private region header.
  *
- * @param region Region descriptor whose mutex should be locked.
+ * @param mutex Shared mutex to acquire.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus shm_region_lock(ShmRegion *region)
+static OffsetStoreStatus shm_region_lock_one(pthread_mutex_t *mutex)
 {
-    ShmRegionHeader *header;
-
-    if (region == NULL) {
-        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
-    }
-
-    header = shm_region_header_mut(region);
-    if (header == NULL) {
+    if (mutex == NULL) {
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
-    if (pthread_mutex_lock(&header->mutex) != 0) {
+    if (pthread_mutex_lock(mutex) != 0) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
@@ -643,29 +768,287 @@ OffsetStoreStatus shm_region_lock(ShmRegion *region)
 }
 
 /**
- * @brief Releases the region's shared mutex.
+ * @brief Releases one process-shared mutex stored in the private region header.
  *
- * @param region Region descriptor whose mutex should be unlocked.
+ * @param mutex Shared mutex to release.
  * @return Status code describing success or failure.
  */
-OffsetStoreStatus shm_region_unlock(ShmRegion *region)
+static OffsetStoreStatus shm_region_unlock_one(pthread_mutex_t *mutex)
 {
-    ShmRegionHeader *header;
-
-    if (region == NULL) {
-        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
-    }
-
-    header = shm_region_header_mut(region);
-    if (header == NULL) {
+    if (mutex == NULL) {
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
-    if (pthread_mutex_unlock(&header->mutex) != 0) {
+    if (pthread_mutex_unlock(mutex) != 0) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     return OFFSET_STORE_STATUS_OK;
+}
+
+/**
+ * @brief Acquires one process-shared rwlock for writing.
+ *
+ * @param rwlock Shared rwlock to acquire.
+ * @return Status code describing success or failure.
+ */
+static OffsetStoreStatus shm_region_wrlock_one(pthread_rwlock_t *rwlock)
+{
+    if (rwlock == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    if (pthread_rwlock_wrlock(rwlock) != 0) {
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+    return OFFSET_STORE_STATUS_OK;
+}
+
+/**
+ * @brief Acquires one process-shared rwlock for reading.
+ *
+ * @param rwlock Shared rwlock to acquire.
+ * @return Status code describing success or failure.
+ */
+static OffsetStoreStatus shm_region_rdlock_one(pthread_rwlock_t *rwlock)
+{
+    if (rwlock == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    if (pthread_rwlock_rdlock(rwlock) != 0) {
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+    return OFFSET_STORE_STATUS_OK;
+}
+
+/**
+ * @brief Releases one process-shared rwlock.
+ *
+ * @param rwlock Shared rwlock to release.
+ * @return Status code describing success or failure.
+ */
+static OffsetStoreStatus shm_region_rwunlock_one(pthread_rwlock_t *rwlock)
+{
+    if (rwlock == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    if (pthread_rwlock_unlock(rwlock) != 0) {
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+    return OFFSET_STORE_STATUS_OK;
+}
+
+/**
+ * @brief Returns the allocator mutex stored in the private region header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Shared allocator mutex pointer, or `NULL` on failure.
+ */
+static pthread_mutex_t *shm_region_allocator_mutex(ShmRegion *region)
+{
+    ShmRegionHeader *header;
+
+    if (region == NULL) {
+        return NULL;
+    }
+
+    header = shm_region_header_mut(region);
+    if (header == NULL) {
+        return NULL;
+    }
+
+    return &header->allocator_mutex;
+}
+
+/**
+ * @brief Returns the roots rwlock stored in the private region header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Shared roots rwlock pointer, or `NULL` on failure.
+ */
+static pthread_rwlock_t *shm_region_roots_rwlock(ShmRegion *region)
+{
+    ShmRegionHeader *header;
+
+    if (region == NULL) {
+        return NULL;
+    }
+
+    header = shm_region_header_mut(region);
+    if (header == NULL) {
+        return NULL;
+    }
+
+    return &header->roots_rwlock;
+}
+
+/**
+ * @brief Returns the index rwlock stored in the private region header.
+ *
+ * @param region Region descriptor to inspect.
+ * @return Shared index rwlock pointer, or `NULL` on failure.
+ */
+static pthread_rwlock_t *shm_region_index_rwlock(ShmRegion *region)
+{
+    ShmRegionHeader *header;
+
+    if (region == NULL) {
+        return NULL;
+    }
+
+    header = shm_region_header_mut(region);
+    if (header == NULL) {
+        return NULL;
+    }
+
+    return &header->index_rwlock;
+}
+
+/**
+ * @brief Acquires the allocator subsystem mutex.
+ *
+ * @param region Region descriptor whose allocator mutex should be locked.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_allocator_lock(ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_lock_one(shm_region_allocator_mutex(region));
+}
+
+/**
+ * @brief Releases the allocator subsystem mutex.
+ *
+ * @param region Region descriptor whose allocator mutex should be unlocked.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_allocator_unlock(ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_unlock_one(shm_region_allocator_mutex(region));
+}
+
+/**
+ * @brief Acquires the roots subsystem write lock.
+ *
+ * @param region Region descriptor whose roots lock should be locked for writing.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_roots_lock(ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_wrlock_one(shm_region_roots_rwlock(region));
+}
+
+/**
+ * @brief Acquires the roots subsystem read lock.
+ *
+ * @param region Region descriptor whose roots lock should be locked for reading.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_roots_read_lock(ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_rdlock_one(shm_region_roots_rwlock(region));
+}
+
+/**
+ * @brief Releases the roots subsystem lock.
+ *
+ * @param region Region descriptor whose roots lock should be unlocked.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_roots_unlock(ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_rwunlock_one(shm_region_roots_rwlock(region));
+}
+
+/**
+ * @brief Acquires the index subsystem write lock.
+ *
+ * @param region Region descriptor whose index lock should be locked for writing.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_lock(ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_wrlock_one(shm_region_index_rwlock(region));
+}
+
+/**
+ * @brief Acquires the index subsystem read lock.
+ *
+ * @param region Region descriptor whose index lock should be locked for reading.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_read_lock(ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_rdlock_one(shm_region_index_rwlock(region));
+}
+
+/**
+ * @brief Releases the index subsystem lock.
+ *
+ * @param region Region descriptor whose index lock should be unlocked.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_unlock(ShmRegion *region)
+{
+    if (region == NULL) {
+        return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+    }
+
+    return shm_region_rwunlock_one(shm_region_index_rwlock(region));
+}
+
+/**
+ * @brief Acquires the allocator subsystem mutex through the legacy region-lock API.
+ *
+ * @param region Region descriptor whose allocator mutex should be locked.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_lock(ShmRegion *region)
+{
+    return shm_region_allocator_lock(region);
+}
+
+/**
+ * @brief Releases the allocator subsystem mutex through the legacy region-lock API.
+ *
+ * @param region Region descriptor whose allocator mutex should be unlocked.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_unlock(ShmRegion *region)
+{
+    return shm_region_allocator_unlock(region);
 }
 
 /**
@@ -791,7 +1174,7 @@ OffsetStoreStatus shm_region_set_root(ShmRegion *region, const char *name, Offse
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    status = shm_region_lock(region);
+    status = shm_region_roots_lock(region);
     if (status != OFFSET_STORE_STATUS_OK) {
         return status;
     }
@@ -802,7 +1185,7 @@ OffsetStoreStatus shm_region_set_root(ShmRegion *region, const char *name, Offse
     }
 
     if (entry == NULL) {
-        shm_region_unlock(region);
+        shm_region_roots_unlock(region);
         return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
     }
 
@@ -812,7 +1195,7 @@ OffsetStoreStatus shm_region_set_root(ShmRegion *region, const char *name, Offse
     memcpy(entry->name, name, strlen(name));
     entry->object = object;
 
-    return shm_region_unlock(region);
+    return shm_region_roots_unlock(region);
 }
 
 /**
@@ -838,19 +1221,19 @@ OffsetStoreStatus shm_region_get_root(ShmRegion *region, const char *name, Offse
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    status = shm_region_lock(region);
+    status = shm_region_roots_read_lock(region);
     if (status != OFFSET_STORE_STATUS_OK) {
         return status;
     }
 
     entry = shm_region_find_root((ShmRegionHeader *) header, name);
     if (entry == NULL) {
-        shm_region_unlock(region);
+        shm_region_roots_unlock(region);
         return OFFSET_STORE_STATUS_NOT_FOUND;
     }
 
     *out_object = entry->object;
-    return shm_region_unlock(region);
+    return shm_region_roots_unlock(region);
 }
 
 /**
@@ -875,14 +1258,14 @@ OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name)
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    status = shm_region_lock(region);
+    status = shm_region_roots_lock(region);
     if (status != OFFSET_STORE_STATUS_OK) {
         return status;
     }
 
     entry = shm_region_find_root(header, name);
     if (entry == NULL) {
-        shm_region_unlock(region);
+        shm_region_roots_unlock(region);
         return OFFSET_STORE_STATUS_NOT_FOUND;
     }
 
@@ -891,7 +1274,7 @@ OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name)
     memset(entry->name, 0, sizeof(entry->name));
     entry->object = offset_ptr_null();
 
-    return shm_region_unlock(region);
+    return shm_region_roots_unlock(region);
 }
 
 /**
@@ -917,7 +1300,7 @@ OffsetStoreStatus shm_region_index_put(ShmRegion *region, const char *key, Offse
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    status = shm_region_lock(region);
+    status = shm_region_index_lock(region);
     if (status != OFFSET_STORE_STATUS_OK) {
         return status;
     }
@@ -928,7 +1311,7 @@ OffsetStoreStatus shm_region_index_put(ShmRegion *region, const char *key, Offse
     }
 
     if (entry == NULL) {
-        shm_region_unlock(region);
+        shm_region_index_unlock(region);
         return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
     }
 
@@ -938,7 +1321,7 @@ OffsetStoreStatus shm_region_index_put(ShmRegion *region, const char *key, Offse
     memcpy(entry->key, key, strlen(key));
     entry->object = object;
 
-    return shm_region_unlock(region);
+    return shm_region_index_unlock(region);
 }
 
 /**
@@ -964,19 +1347,19 @@ OffsetStoreStatus shm_region_index_get(ShmRegion *region, const char *key, Offse
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    status = shm_region_lock(region);
+    status = shm_region_index_read_lock(region);
     if (status != OFFSET_STORE_STATUS_OK) {
         return status;
     }
 
     entry = shm_region_find_index_entry((ShmRegionHeader *) header, key);
     if (entry == NULL) {
-        shm_region_unlock(region);
+        shm_region_index_unlock(region);
         return OFFSET_STORE_STATUS_NOT_FOUND;
     }
 
     *out_object = entry->object;
-    return shm_region_unlock(region);
+    return shm_region_index_unlock(region);
 }
 
 /**
@@ -1001,13 +1384,13 @@ OffsetStoreStatus shm_region_index_contains(ShmRegion *region, const char *key, 
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    status = shm_region_lock(region);
+    status = shm_region_index_read_lock(region);
     if (status != OFFSET_STORE_STATUS_OK) {
         return status;
     }
 
     *out_contains = shm_region_find_index_entry((ShmRegionHeader *) header, key) != NULL;
-    return shm_region_unlock(region);
+    return shm_region_index_unlock(region);
 }
 
 /**
@@ -1032,14 +1415,14 @@ OffsetStoreStatus shm_region_index_remove(ShmRegion *region, const char *key)
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    status = shm_region_lock(region);
+    status = shm_region_index_lock(region);
     if (status != OFFSET_STORE_STATUS_OK) {
         return status;
     }
 
     entry = shm_region_find_index_entry(header, key);
     if (entry == NULL) {
-        shm_region_unlock(region);
+        shm_region_index_unlock(region);
         return OFFSET_STORE_STATUS_NOT_FOUND;
     }
 
@@ -1048,5 +1431,5 @@ OffsetStoreStatus shm_region_index_remove(ShmRegion *region, const char *key)
     memset(entry->key, 0, sizeof(entry->key));
     entry->object = offset_ptr_null();
 
-    return shm_region_unlock(region);
+    return shm_region_index_unlock(region);
 }

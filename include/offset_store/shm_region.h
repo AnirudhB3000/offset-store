@@ -41,7 +41,7 @@ typedef struct {
  * @brief Public region layout version stored in the shared header.
  */
 enum {
-    OFFSET_STORE_REGION_VERSION = 3
+    OFFSET_STORE_REGION_VERSION = 5
 };
 
 /**
@@ -99,24 +99,87 @@ OffsetStoreStatus shm_region_close(ShmRegion *region);
  */
 OffsetStoreStatus shm_region_unlink(const char *name);
 /**
- * @brief Acquires the shared region mutex.
+ * @brief Acquires the allocator subsystem mutex.
  *
- * @param region Region whose shared mutex should be locked.
+ * This backward-compatible helper now maps to the allocator lock so existing
+ * callers that need explicit allocator serialization continue to work.
+ *
+ * @param region Region whose allocator mutex should be locked.
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus shm_region_lock(ShmRegion *region);
 /**
- * @brief Releases the shared region mutex.
+ * @brief Releases the allocator subsystem mutex.
  *
- * @param region Region whose shared mutex should be unlocked.
+ * This backward-compatible helper now maps to the allocator lock so existing
+ * callers that need explicit allocator serialization continue to work.
+ *
+ * @param region Region whose allocator mutex should be unlocked.
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus shm_region_unlock(ShmRegion *region);
 /**
+ * @brief Acquires the allocator subsystem mutex.
+ *
+ * @param region Region whose allocator mutex should be locked.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_allocator_lock(ShmRegion *region);
+/**
+ * @brief Releases the allocator subsystem mutex.
+ *
+ * @param region Region whose allocator mutex should be unlocked.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_allocator_unlock(ShmRegion *region);
+/**
+ * @brief Acquires the roots subsystem write lock.
+ *
+ * @param region Region whose roots lock should be acquired for writing.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_roots_lock(ShmRegion *region);
+/**
+ * @brief Acquires the roots subsystem read lock.
+ *
+ * @param region Region whose roots lock should be acquired for reading.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_roots_read_lock(ShmRegion *region);
+/**
+ * @brief Releases the roots subsystem lock.
+ *
+ * @param region Region whose roots lock should be released.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_roots_unlock(ShmRegion *region);
+/**
+ * @brief Acquires the index subsystem write lock.
+ *
+ * @param region Region whose index lock should be acquired for writing.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_lock(ShmRegion *region);
+/**
+ * @brief Acquires the index subsystem read lock.
+ *
+ * @param region Region whose index lock should be acquired for reading.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_read_lock(ShmRegion *region);
+/**
+ * @brief Releases the index subsystem lock.
+ *
+ * @param region Region whose index lock should be released.
+ * @return Status code describing success or failure.
+ */
+OffsetStoreStatus shm_region_index_unlock(ShmRegion *region);
+/**
  * @brief Validates the private shared region header for an attached mapping.
  *
  * This check verifies that the mapped region contains the expected magic,
- * layout version, and total-size metadata for the current binary.
+ * layout version, total-size metadata, an operational allocator mutex, and
+ * operational roots/index rwlocks for the current binary.
  *
  * @param region Region descriptor to validate.
  * @return Status code describing success or failure.
@@ -176,8 +239,8 @@ size_t shm_region_usable_size(const ShmRegion *region);
 /**
  * @brief Stores or replaces a named root entry inside the shared region.
  *
- * This helper acquires the region mutex internally and updates the fixed root
- * table stored in the private shared header.
+ * This helper acquires the roots write lock internally and updates the fixed root
+ * table stored in the private shared header without taking the allocator lock.
  *
  * @param region Region descriptor whose root table should be updated.
  * @param name Root name to create or replace.
@@ -188,8 +251,8 @@ OffsetStoreStatus shm_region_set_root(ShmRegion *region, const char *name, Offse
 /**
  * @brief Looks up a named root entry inside the shared region.
  *
- * This helper acquires the region mutex internally before reading the fixed
- * root table stored in the private shared header.
+ * This helper acquires the roots read lock internally before reading the fixed root
+ * table stored in the private shared header.
  *
  * @param region Region descriptor whose root table should be queried.
  * @param name Root name to resolve.
@@ -200,7 +263,7 @@ OffsetStoreStatus shm_region_get_root(ShmRegion *region, const char *name, Offse
 /**
  * @brief Removes a named root entry from the shared region.
  *
- * This helper acquires the region mutex internally before clearing the fixed
+ * This helper acquires the roots write lock internally before clearing the fixed
  * root table entry stored in the private shared header.
  *
  * @param region Region descriptor whose root table should be updated.
@@ -211,8 +274,8 @@ OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name);
 /**
  * @brief Stores or replaces an indexed entry inside the shared region.
  *
- * This helper acquires the region mutex internally and updates the fixed index
- * table stored in the private shared header.
+ * This helper acquires the index write lock internally and updates the fixed index
+ * table stored in the private shared header without taking the allocator lock.
  *
  * @param region Region descriptor whose index should be updated.
  * @param key Index key to create or replace.
@@ -223,7 +286,7 @@ OffsetStoreStatus shm_region_index_put(ShmRegion *region, const char *key, Offse
 /**
  * @brief Looks up an indexed entry inside the shared region.
  *
- * This helper acquires the region mutex internally before reading the fixed
+ * This helper acquires the index read lock internally before reading the fixed
  * index table stored in the private shared header.
  *
  * @param region Region descriptor whose index should be queried.
@@ -244,7 +307,7 @@ OffsetStoreStatus shm_region_index_contains(ShmRegion *region, const char *key, 
 /**
  * @brief Removes an indexed entry from the shared region.
  *
- * This helper acquires the region mutex internally before clearing the fixed
+ * This helper acquires the index write lock internally before clearing the fixed
  * index entry stored in the private shared header.
  *
  * @param region Region descriptor whose index should be updated.

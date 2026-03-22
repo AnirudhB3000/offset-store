@@ -114,7 +114,7 @@ Current implemented `shm_region` responsibilities:
 - create a new shared memory object and size it with `ftruncate`
 - map a region with `mmap`
 - store and validate a fixed private region header at the start of the mapping
-- initialize and expose a process-shared mutex stored in the region header
+- initialize and expose the process-shared allocator mutex plus the roots/index rwlocks stored in the region header
 - store a fixed-capacity named root table for well-known shared objects
 - store a fixed-capacity shared index table for general key-to-object discovery
 - expose region metadata through narrow query helpers plus data start and usable
@@ -320,7 +320,7 @@ Current implemented root-discovery behavior:
 - each root binds a short stable name to an `OffsetPtr`
 - roots are intended for well-known entry-point objects such as shared config,
   top-level indexes, or coordination objects
-- root-table operations take the region mutex internally
+- root-table operations take the roots rwlock internally
 - freeing a rooted object does not automatically remove the root, so callers
   must keep root bindings in sync with object lifetime
 
@@ -328,11 +328,11 @@ Root-table algorithm:
 
 1. The private region header contains a fixed-capacity array of root entries.
 2. Each entry stores an occupancy flag, a short inline name, and an `OffsetPtr`.
-3. `offset_store_set_root(...)` locks the region, scans for an existing matching
+3. `offset_store_set_root(...)` takes the roots write lock, scans for an existing matching
    name, and otherwise uses the first free slot.
-4. `offset_store_get_root(...)` locks the region, performs a linear scan for the
+4. `offset_store_get_root(...)` takes the roots read lock, performs a linear scan for the
    requested name, and returns the stored handle.
-5. `offset_store_remove_root(...)` locks the region, clears the matching entry,
+5. `offset_store_remove_root(...)` takes the roots write lock, clears the matching entry,
    and resets its handle to null.
 
 This is intentionally not a hash table yet. The fixed array keeps layout and
@@ -342,7 +342,7 @@ Current implemented shared-index behavior:
 
 - the private region header also contains a fixed-capacity index table
 - each index entry binds a short key to an `OffsetPtr`
-- index operations use linear scans under the region mutex
+- index operations use linear scans under the index rwlock
 - the index is meant for general small directories, while roots remain the
   smaller set of well-known entry points
 
@@ -350,13 +350,13 @@ Index algorithm:
 
 1. The private region header contains a fixed-capacity array of index entries.
 2. Each entry stores an occupancy flag, a short inline key, and an `OffsetPtr`.
-3. `offset_store_index_put(...)` locks the region, scans for an existing
+3. `offset_store_index_put(...)` takes the index write lock, scans for an existing
    matching key, and otherwise uses the first free slot.
-4. `offset_store_index_get(...)` locks the region, performs a linear scan for
+4. `offset_store_index_get(...)` takes the index read lock, performs a linear scan for
    the requested key, and returns the stored handle.
-5. `offset_store_index_contains(...)` locks the region and reports whether the
+5. `offset_store_index_contains(...)` takes the index read lock and reports whether the
    key is present.
-6. `offset_store_index_remove(...)` locks the region, clears the matching
+6. `offset_store_index_remove(...)` takes the index write lock, clears the matching
    entry, and resets its handle to null.
 
 ## Build And Debug Workflow
@@ -438,8 +438,8 @@ Bootstrap algorithm:
 1. Create a POSIX shared-memory object with `shm_open(..., O_CREAT | O_EXCL, ...)`.
 2. Resize it with `ftruncate(...)`.
 3. Map it with `mmap(...)`.
-4. Write the private region header, initialize the process-shared mutex, and
-   clear the fixed root table.
+4. Write the private region header, initialize the process-shared allocator
+   mutex plus roots/index rwlocks, and clear the fixed root and index tables.
 5. Initialize allocator metadata and seed the heap with one large free block.
 6. Return a process-local `OffsetStore` wrapper that points at the mapping.
 
@@ -501,8 +501,9 @@ Current validation surface:
 
 Recommended synchronization pattern:
 
-- rely on allocator/object allocation and free paths for internal mutation locking
-- take the region mutex explicitly when a caller needs a stable multi-step read or write sequence
+- rely on allocator/object allocation and free paths for internal allocator locking
+- use the dedicated root and index APIs for publication work that should not contend with allocator mutation
+- take the relevant subsystem lock explicitly when a caller needs a stable multi-step sequence
 - avoid keeping resolved raw pointers across calls that may free or remap the underlying object
 - prefer re-resolving from `OffsetPtr` after synchronization is re-established
 
@@ -531,25 +532,52 @@ Synchronization design rules:
 
 Current implemented synchronization behavior:
 
-- a process-shared `pthread_mutex_t` lives in `ShmRegionHeader`
-- `shm_region_create` initializes the mutex for multi-process use
+- one process-shared `pthread_mutex_t` plus two process-shared
+  `pthread_rwlock_t` values live in `ShmRegionHeader`
+- `shm_region_create` initializes the allocator mutex and the roots/index
+  rwlocks for multi-process use
+- `shm_region_validate(...)` now checks both header fields and that each
+  subsystem lock is operational
 - allocator mutation paths (`allocator_init`, `allocator_alloc`, `allocator_free`)
-  take the region mutex before touching shared allocator metadata
-- the current lock scope is coarse-grained and protects allocator/shared-region
-  mutation rather than individual structures
+  take only the allocator mutex
+- root-table paths take only the roots rwlock, using read locks for lookup and
+  write locks for put/remove
+- shared-index paths take only the index rwlock, using read locks for lookup
+  and contains plus write locks for put/remove
+- there is no multi-lock public operation yet, so current operations do not
+  require cross-subsystem lock ordering
+
+Canonical lock order for any future multi-lock path:
+
+- allocator
+- roots
+- index
 
 Current internal-locking contract:
 
-- acquires the region mutex internally:
+- acquires the allocator mutex internally:
   `allocator_init(...)`, `allocator_alloc(...)`, `allocator_free(...)`
-- does not acquire the region mutex internally:
+- acquires the roots rwlock internally:
+  `shm_region_set_root(...)`, `shm_region_get_root(...)`,
+  `shm_region_remove_root(...)`, `offset_store_set_root(...)`,
+  `offset_store_get_root(...)`, `offset_store_remove_root(...)`
+- acquires the index rwlock internally:
+  `shm_region_index_put(...)`, `shm_region_index_get(...)`,
+  `shm_region_index_contains(...)`, `shm_region_index_remove(...)`,
+  `offset_store_index_put(...)`, `offset_store_index_get(...)`,
+  `offset_store_index_contains(...)`, `offset_store_index_remove(...)`
+- does not acquire subsystem locks internally:
   `allocator_validate(...)`, allocator metadata query helpers,
   `object_store_get_header(...)`, `object_store_get_header_mut(...)`,
   `object_store_get_payload_const(...)`, `object_store_get_payload(...)`,
   and the `shm_region` metadata/query helpers other than explicit
-  `shm_region_lock(...)` and `shm_region_unlock(...)`
+  subsystem lock helpers such as `shm_region_allocator_lock(...)`,
+  `shm_region_roots_lock(...)`, and `shm_region_index_lock(...)`
 - callers that need a stable read view during concurrent mutation must provide
-  external synchronization themselves, typically by taking the region mutex
+  external synchronization themselves, typically by taking the relevant
+  subsystem lock
+- higher-level store flows such as bootstrap/open/validate currently do not
+  nest subsystem locks; they remain single-subsystem operations today
 
 Current consistency model for reads during concurrent mutation:
 
@@ -643,7 +671,7 @@ Current responsibilities:
 - size and map the shared region
 - expose region metadata such as base address and total size
 - coordinate initialization of region-level headers
-- provide the process-shared region mutex used by allocator mutation
+- provide the process-shared allocator mutex plus the roots/index rwlocks
 
 Key constraint:
 

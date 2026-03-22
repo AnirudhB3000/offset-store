@@ -481,23 +481,23 @@ OffsetStoreStatus allocator_init(ShmRegion *region)
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    if (shm_region_lock(region) != OFFSET_STORE_STATUS_OK) {
+    if (shm_region_allocator_lock(region) != OFFSET_STORE_STATUS_OK) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     if (!allocator_region_offsets(region, &heap_offset, &heap_size) || heap_size < allocator_min_block_size()) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
     }
 
     header = allocator_header_mut(region);
     if (header == NULL) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
     if (allocator_header_valid(region, header)) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_ALREADY_EXISTS;
     }
 
@@ -511,7 +511,7 @@ OffsetStoreStatus allocator_init(ShmRegion *region)
 
     initial_block_offset.offset = heap_offset;
     if (!allocator_block_from_offset(region, initial_block_offset, &initial_block)) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
@@ -523,7 +523,7 @@ OffsetStoreStatus allocator_init(ShmRegion *region)
     initial_block->next_free = offset_ptr_null();
     initial_block->flags = OFFSET_STORE_ALLOCATOR_BLOCK_FREE;
     initial_block->payload_offset = 0;
-    if (shm_region_unlock(region) != OFFSET_STORE_STATUS_OK) {
+    if (shm_region_allocator_unlock(region) != OFFSET_STORE_STATUS_OK) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
     return OFFSET_STORE_STATUS_OK;
@@ -624,13 +624,13 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    if (shm_region_lock(region) != OFFSET_STORE_STATUS_OK) {
+    if (shm_region_allocator_lock(region) != OFFSET_STORE_STATUS_OK) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     header = allocator_header_mut(region);
     if (!allocator_header_valid(region, header)) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
@@ -646,20 +646,20 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
 
         if (!allocator_block_is_in_heap(header, current_offset) ||
             !allocator_block_from_offset(region, current_offset, &block)) {
-            shm_region_unlock(region);
+            shm_region_allocator_unlock(region);
             return OFFSET_STORE_STATUS_INVALID_STATE;
         }
 
         block_bytes = (unsigned char *) block;
         prefix_base = sizeof(AllocatorBlockHeader) + sizeof(AllocationPrefix);
         if (!allocator_align_up(prefix_base + (size_t) current_offset.offset, alignment, &payload_offset)) {
-            shm_region_unlock(region);
+            shm_region_allocator_unlock(region);
             return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
         }
 
         payload_offset -= (size_t) current_offset.offset;
         if (!allocator_align_up(payload_offset + size, alignof(max_align_t), &required_size)) {
-            shm_region_unlock(region);
+            shm_region_allocator_unlock(region);
             return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
         }
 
@@ -673,7 +673,7 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
 
                 next_block_offset.offset = current_offset.offset + required_size;
                 if (!allocator_block_from_offset(region, next_block_offset, &next_block)) {
-                    shm_region_unlock(region);
+                    shm_region_allocator_unlock(region);
                     return OFFSET_STORE_STATUS_INVALID_STATE;
                 }
 
@@ -694,7 +694,7 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
             prefix = (AllocationPrefix *) (block_bytes + payload_offset - sizeof(AllocationPrefix));
             prefix->block_offset = current_offset.offset;
             *out_ptr = block_bytes + payload_offset;
-            if (shm_region_unlock(region) != OFFSET_STORE_STATUS_OK) {
+            if (shm_region_allocator_unlock(region) != OFFSET_STORE_STATUS_OK) {
                 return OFFSET_STORE_STATUS_SYSTEM_ERROR;
             }
             return OFFSET_STORE_STATUS_OK;
@@ -705,7 +705,7 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
     }
 
     header->allocation_failures += 1;
-    shm_region_unlock(region);
+    shm_region_allocator_unlock(region);
     return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
 }
 
@@ -728,13 +728,13 @@ OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr)
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    if (shm_region_lock(region) != OFFSET_STORE_STATUS_OK) {
+    if (shm_region_allocator_lock(region) != OFFSET_STORE_STATUS_OK) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
     header = allocator_header_mut(region);
     if (!allocator_header_valid(region, header)) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
@@ -742,18 +742,18 @@ OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr)
     block_offset.offset = prefix->block_offset;
     if (!allocator_block_is_in_heap(header, block_offset) ||
         !allocator_block_from_offset(region, block_offset, &block)) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
     if ((block->flags & OFFSET_STORE_ALLOCATOR_BLOCK_FREE) != 0) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
     expected_payload = (unsigned char *) block + block->payload_offset;
     if (expected_payload != (unsigned char *) ptr) {
-        shm_region_unlock(region);
+        shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
@@ -761,7 +761,7 @@ OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr)
     block->payload_offset = 0;
     block->next_free = header->free_list_head;
     header->free_list_head = block_offset;
-    if (shm_region_unlock(region) != OFFSET_STORE_STATUS_OK) {
+    if (shm_region_allocator_unlock(region) != OFFSET_STORE_STATUS_OK) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
     return OFFSET_STORE_STATUS_OK;
