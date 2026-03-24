@@ -365,7 +365,8 @@ Current build entry points:
 
 - `make` builds the example binaries into `build/`
 - `make examples` builds `build/producer` and `build/consumer`
-- `make test` builds and runs the unit test suite
+- `make test` builds and runs the default deterministic unit/integration suite
+- `make stress` builds and runs the heavier stress-oriented test binaries
 - `make clean` removes `build/`
 
 Example flow:
@@ -382,15 +383,20 @@ Example flow:
 Recommended debugging workflow:
 
 - use `make test` as the baseline correctness check
+- use `make stress` for heavier soak-style concurrency coverage that is kept
+  out of the default `make test` path
 - the allocator test binary now includes a multi-process churn stress test that
   forks several workers, repeatedly allocates and frees varied payload sizes,
   and then checks allocator validation plus final heap stats in the parent
 - the store test binary now includes a roots/index reader-writer contention
   stress test with concurrent writers and lookup readers to exercise the
   current directory rwlock model under load
-- the store test binary also includes a mixed full-system stress test that
-  combines object allocation/free churn, root/index publication, concurrent
-  readers, and periodic validation/stat snapshots
+- the dedicated `test_store_stress` binary run by `make stress` includes a
+  mixed full-system stress test that
+  begins with a synchronized stable-publication phase and then combines object
+  allocation/free churn, root/index publication, concurrent readers, and
+  periodic validation/stat snapshots while tolerating expected out-of-memory
+  skips during the churn phase
 - attach `gdb` to the example binaries for step-by-step shared-memory inspection
 - run the test or example binaries under `valgrind` when investigating memory misuse
 - inspect `/dev/shm` to confirm POSIX shared-memory objects are being created and removed
