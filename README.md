@@ -369,6 +369,12 @@ Current build entry points:
 - `make stress` builds and runs the heavier stress-oriented test binaries
 - `make clean` removes `build/`
 
+Continuous integration:
+
+- GitHub Actions now runs a minimal CI workflow on pushes and pull requests
+- the workflow builds the examples and runs `make test`
+- the heavier `make stress` target remains opt-in and is not part of the default CI path
+
 Example flow:
 
 1. Run `make examples`.
