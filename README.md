@@ -23,7 +23,11 @@ allocator and object-store internals, see
 [`src/README.md`](/home/aniru/offset-store/src/README.md).
 
 Code documentation now follows a Doxygen-style convention for public headers,
-implementation helpers, tests, and examples.
+implementation helpers, tests, and examples. Public headers also use grouped
+`@name ... @{ ... @}` sections so related APIs appear together in both the
+source and generated documentation. The same grouping style now also applies to
+the main implementation `.c` files so private layout structs, internal helpers,
+and exported entry points are sectioned consistently.
 
 The polished getter/accessor APIs now also have explicit regression coverage in
 the unit tests so naming and contract behavior stay stable during future cleanup.

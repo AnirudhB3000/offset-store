@@ -10,6 +10,11 @@
 #include <stdint.h>
 
 /**
+ * @file object_store.h
+ * @brief Shared-memory object allocation, validation, and resolution APIs.
+ */
+
+/**
  * @name Shared-Memory Resident Value Types
  *
  * These types have stable layouts and are safe to place inside allocator-owned
@@ -45,6 +50,11 @@ enum {
 };
 
 /**
+ * @name Object Lifecycle
+ * @{
+ */
+
+/**
  * @brief Allocates a new object and returns its shared offset handle.
  *
  * @param region Region whose object heap should satisfy the request.
@@ -74,6 +84,13 @@ OffsetStoreStatus object_store_free(ShmRegion *region, OffsetPtr object);
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus object_store_validate(const ShmRegion *region, OffsetPtr object);
+
+/** @} */
+
+/**
+ * @name Object Resolution
+ * @{
+ */
 
 /**
  * @brief Resolves an object handle to a read-only header pointer.
@@ -119,5 +136,7 @@ const void *object_store_get_payload_const(const ShmRegion *region, OffsetPtr ob
  * @return Mutable payload pointer on success, or `NULL` on failure.
  */
 void *object_store_get_payload(ShmRegion *region, OffsetPtr object);
+
+/** @} */
 
 #endif

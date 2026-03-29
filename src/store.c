@@ -1,6 +1,16 @@
 #include "offset_store/store.h"
 
 /**
+ * @file store.c
+ * @brief High-level shared-memory store lifecycle and discovery implementation.
+ */
+
+/**
+ * @name Internal Helpers
+ * @{
+ */
+
+/**
  * @brief Resets a process-local store wrapper to its empty state.
  *
  * @param store Store descriptor to reset.
@@ -16,6 +26,13 @@ static void offset_store_reset(OffsetStore *store)
     store->region.size = 0;
     store->region.creator = false;
 }
+
+/** @} */
+
+/**
+ * @name Store Lifecycle
+ * @{
+ */
 
 /**
  * @brief Creates a new shared-memory store and initializes its allocator.
@@ -128,6 +145,13 @@ OffsetStoreStatus offset_store_validate(const OffsetStore *store)
     return allocator_validate(&store->region);
 }
 
+/** @} */
+
+/**
+ * @name Named Roots
+ * @{
+ */
+
 /**
  * @brief Stores or replaces a named root in the shared region.
  *
@@ -177,6 +201,13 @@ OffsetStoreStatus offset_store_remove_root(OffsetStore *store, const char *name)
 
     return shm_region_remove_root(&store->region, name);
 }
+
+/** @} */
+
+/**
+ * @name Shared Index
+ * @{
+ */
 
 /**
  * @brief Stores or replaces an indexed entry in the shared region.
@@ -244,3 +275,5 @@ OffsetStoreStatus offset_store_index_remove(OffsetStore *store, const char *key)
 
     return shm_region_index_remove(&store->region, key);
 }
+
+/** @} */

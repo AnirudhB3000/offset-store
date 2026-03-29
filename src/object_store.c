@@ -4,10 +4,20 @@
 
 #include <stdalign.h>
 
+/**
+ * @file object_store.c
+ * @brief Shared-memory object allocation, validation, and resolution implementation.
+ */
+
 _Static_assert(
     (sizeof(ObjectHeader) % alignof(max_align_t)) == 0,
     "ObjectHeader size must preserve payload alignment"
 );
+
+/**
+ * @name Internal Resolution Helpers
+ * @{
+ */
 
 /**
  * @brief Resolves and validates an object header plus an optional payload span.
@@ -53,6 +63,13 @@ static bool object_store_resolve_header(
 
     return ((((const ObjectHeader *) *out_header)->flags & OFFSET_STORE_OBJECT_FLAG_FREED) == 0u);
 }
+
+/** @} */
+
+/**
+ * @name Object Resolution
+ * @{
+ */
 
 /**
  * @brief Resolves an object handle to a read-only header pointer.
@@ -125,6 +142,13 @@ void *object_store_get_payload(ShmRegion *region, OffsetPtr object)
 {
     return (void *) object_store_get_payload_const(region, object);
 }
+
+/** @} */
+
+/**
+ * @name Object Lifecycle
+ * @{
+ */
 
 /**
  * @brief Allocates a new object and returns its offset handle.
@@ -221,3 +245,5 @@ OffsetStoreStatus object_store_validate(const ShmRegion *region, OffsetPtr objec
         ? OFFSET_STORE_STATUS_OK
         : OFFSET_STORE_STATUS_INVALID_STATE;
 }
+
+/** @} */

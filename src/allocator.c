@@ -4,6 +4,16 @@
 #include <stdalign.h>
 
 /**
+ * @file allocator.c
+ * @brief Shared-memory allocator implementation.
+ */
+
+/**
+ * @name Private Shared-Memory Layout
+ * @{
+ */
+
+/**
  * @brief Private allocator metadata stored in shared memory.
  */
 typedef struct {
@@ -45,7 +55,14 @@ typedef struct {
     uint64_t block_offset;
 } AllocationPrefix;
 
+/** @} */
+
 static const uint64_t OFFSET_STORE_ALLOCATOR_MAGIC = UINT64_C(0x4f464653414c4c43);
+
+/**
+ * @name Internal Helpers
+ * @{
+ */
 
 /**
  * @brief Returns the offset where private allocator metadata begins.
@@ -181,6 +198,13 @@ static const AllocatorHeader *allocator_header(const ShmRegion *region)
  */
 static bool allocator_header_valid(const ShmRegion *region, const AllocatorHeader *header);
 
+/** @} */
+
+/**
+ * @name Public Introspection
+ * @{
+ */
+
 /**
  * @brief Returns the heap start offset recorded in allocator metadata.
  *
@@ -277,6 +301,13 @@ OffsetStoreStatus allocator_get_allocation_failures(const ShmRegion *region, uin
     return OFFSET_STORE_STATUS_OK;
 }
 
+/** @} */
+
+/**
+ * @name Internal Heap Traversal Helpers
+ * @{
+ */
+
 static bool allocator_header_valid(const ShmRegion *region, const AllocatorHeader *header)
 {
     if (region == NULL || header == NULL) {
@@ -356,6 +387,13 @@ static bool allocator_block_is_in_heap(const AllocatorHeader *header, OffsetPtr 
     return true;
 }
 
+/** @} */
+
+/**
+ * @name Public Statistics
+ * @{
+ */
+
 /**
  * @brief Returns a snapshot of allocator usage and free-space statistics.
  *
@@ -415,6 +453,8 @@ OffsetStoreStatus allocator_get_stats(const ShmRegion *region, AllocatorStats *o
 
     return OFFSET_STORE_STATUS_OK;
 }
+
+/** @} */
 
 /**
  * @brief Returns the usable span of a live allocation.

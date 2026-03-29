@@ -11,7 +11,17 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/**
+ * @file shm_region.c
+ * @brief Shared-memory region lifecycle, synchronization, and discovery implementation.
+ */
+
 static const uint64_t OFFSET_STORE_REGION_MAGIC = UINT64_C(0x4f464653544f5245);
+
+/**
+ * @name Private Shared-Memory Layout
+ * @{
+ */
 
 /**
  * @brief Private fixed-size root table entry stored in the shared region header.
@@ -73,6 +83,13 @@ typedef struct {
     /** Fixed-capacity index table for general shared object discovery. */
     ShmRegionIndexEntry index[OFFSET_STORE_INDEX_CAPACITY];
 } ShmRegionHeader;
+
+/** @} */
+
+/**
+ * @name Internal Helpers
+ * @{
+ */
 
 /**
  * @brief Resets a process-local region descriptor to its empty state.
@@ -355,6 +372,8 @@ static ShmRegionIndexEntry *shm_region_index(ShmRegionHeader *header)
 
     return header->index;
 }
+
+/** @} */
 
 /**
  * @brief Finds an existing root entry by name.

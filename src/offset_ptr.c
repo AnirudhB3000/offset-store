@@ -4,6 +4,16 @@
 #include <stdint.h>
 
 /**
+ * @file offset_ptr.c
+ * @brief Offset-based shared-memory pointer conversion and resolution helpers.
+ */
+
+/**
+ * @name Offset Pointer Helpers
+ * @{
+ */
+
+/**
  * @brief Returns the null offset pointer sentinel.
  *
  * @return Offset pointer whose offset is zero.
@@ -173,3 +183,5 @@ bool offset_ptr_try_resolve_const(
     *out_raw = resolved;
     return true;
 }
+
+/** @} */

@@ -9,6 +9,11 @@
 #include <stddef.h>
 
 /**
+ * @file store.h
+ * @brief High-level shared-memory store lifecycle and discovery APIs.
+ */
+
+/**
  * @name Process-Local Descriptors
  *
  * These wrappers exist only inside one process. They coordinate access to a
@@ -29,6 +34,11 @@ typedef struct {
 } OffsetStore;
 
 /**@}*/
+
+/**
+ * @name Store Lifecycle
+ * @{
+ */
 
 /**
  * @brief Creates a region and initializes allocator state for first use.
@@ -64,6 +74,13 @@ OffsetStoreStatus offset_store_close(OffsetStore *store);
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus offset_store_validate(const OffsetStore *store);
+
+/** @} */
+
+/**
+ * @name Named Roots
+ * @{
+ */
 /**
  * @brief Stores or replaces a named root in the shared region.
  *
@@ -93,6 +110,13 @@ OffsetStoreStatus offset_store_get_root(OffsetStore *store, const char *name, Of
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus offset_store_remove_root(OffsetStore *store, const char *name);
+
+/** @} */
+
+/**
+ * @name Shared Index
+ * @{
+ */
 /**
  * @brief Stores or replaces an indexed entry in the shared region.
  *
@@ -131,5 +155,7 @@ OffsetStoreStatus offset_store_index_contains(OffsetStore *store, const char *ke
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus offset_store_index_remove(OffsetStore *store, const char *key);
+
+/** @} */
 
 #endif

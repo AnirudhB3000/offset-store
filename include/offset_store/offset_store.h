@@ -2,6 +2,11 @@
 #define OFFSET_STORE_OFFSET_STORE_H
 
 /**
+ * @file offset_store.h
+ * @brief Common public status codes shared across the library API surface.
+ */
+
+/**
  * @brief Library-owned status codes used by the public API surface.
  *
  * Public-facing APIs use explicit library-owned status codes so callers do not
@@ -25,11 +30,18 @@ typedef enum {
 } OffsetStoreStatus;
 
 /**
+ * @name Status Helpers
+ * @{
+ */
+
+/**
  * @brief Returns a human-readable string for a public status code.
  *
  * @param status Status code to stringify.
  * @return Static string describing the status.
  */
 const char *offset_store_status_string(OffsetStoreStatus status);
+
+/** @} */
 
 #endif

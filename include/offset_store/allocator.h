@@ -10,6 +10,11 @@
 #include <stdint.h>
 
 /**
+ * @file allocator.h
+ * @brief Public shared-memory allocator APIs and allocator state snapshots.
+ */
+
+/**
  * @brief Public allocator constants.
  */
 enum {
@@ -42,6 +47,11 @@ typedef struct {
 } AllocatorStats;
 
 /**
+ * @name Allocator Lifecycle And Validation
+ * @{
+ */
+
+/**
  * @brief Initializes allocator metadata inside a mapped region.
  *
  * @param region Region whose allocator state should be initialized.
@@ -55,6 +65,13 @@ OffsetStoreStatus allocator_init(ShmRegion *region);
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus allocator_validate(const ShmRegion *region);
+
+/** @} */
+
+/**
+ * @name Allocation Operations
+ * @{
+ */
 /**
  * @brief Allocates a block from the shared heap.
  *
@@ -73,6 +90,13 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr);
+
+/** @} */
+
+/**
+ * @name Allocation Introspection
+ * @{
+ */
 /**
  * @brief Returns the usable size of a live allocation.
  *
@@ -122,5 +146,7 @@ OffsetStoreStatus allocator_get_allocation_failures(const ShmRegion *region, uin
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus allocator_get_stats(const ShmRegion *region, AllocatorStats *out_stats);
+
+/** @} */
 
 #endif

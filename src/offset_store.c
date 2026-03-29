@@ -1,6 +1,16 @@
 #include "offset_store/offset_store.h"
 
 /**
+ * @file offset_store.c
+ * @brief Public status-code string conversion implementation.
+ */
+
+/**
+ * @name Status Helpers
+ * @{
+ */
+
+/**
  * @brief Returns a stable human-readable label for a public status code.
  *
  * @param status Status code to stringify.
@@ -27,3 +37,5 @@ const char *offset_store_status_string(OffsetStoreStatus status)
         return "unknown status";
     }
 }
+
+/** @} */

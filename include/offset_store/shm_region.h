@@ -10,6 +10,11 @@
 #include <stdint.h>
 
 /**
+ * @file shm_region.h
+ * @brief Shared-memory region lifecycle, synchronization, and discovery APIs.
+ */
+
+/**
  * @name Process-Local Descriptors
  *
  * These types describe one process's view of a shared-memory mapping. They are
@@ -68,6 +73,11 @@ enum {
 };
 
 /**
+ * @name Region Lifecycle
+ * @{
+ */
+
+/**
  * @brief Creates and maps a new shared-memory region.
  *
  * @param[out] out_region Process-local descriptor to initialize.
@@ -98,6 +108,14 @@ OffsetStoreStatus shm_region_close(ShmRegion *region);
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus shm_region_unlink(const char *name);
+
+/** @} */
+
+/**
+ * @name Synchronization
+ * @{
+ */
+
 /**
  * @brief Acquires the allocator subsystem mutex.
  *
@@ -186,6 +204,13 @@ OffsetStoreStatus shm_region_index_unlock(ShmRegion *region);
  */
 OffsetStoreStatus shm_region_validate(const ShmRegion *region);
 
+/** @} */
+
+/**
+ * @name Region Introspection
+ * @{
+ */
+
 /**
  * @brief Returns the size of the private shared region header.
  *
@@ -236,6 +261,13 @@ const void *shm_region_data_const(const ShmRegion *region);
  */
 size_t shm_region_usable_size(const ShmRegion *region);
 
+/** @} */
+
+/**
+ * @name Root Directory
+ * @{
+ */
+
 /**
  * @brief Stores or replaces a named root entry inside the shared region.
  *
@@ -271,6 +303,14 @@ OffsetStoreStatus shm_region_get_root(ShmRegion *region, const char *name, Offse
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name);
+
+/** @} */
+
+/**
+ * @name Shared Index
+ * @{
+ */
+
 /**
  * @brief Stores or replaces an indexed entry inside the shared region.
  *
@@ -315,5 +355,7 @@ OffsetStoreStatus shm_region_index_contains(ShmRegion *region, const char *key, 
  * @return Status code describing success or failure.
  */
 OffsetStoreStatus shm_region_index_remove(ShmRegion *region, const char *key);
+
+/** @} */
 
 #endif

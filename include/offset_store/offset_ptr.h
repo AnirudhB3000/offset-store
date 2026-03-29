@@ -6,6 +6,11 @@
 #include <stdint.h>
 
 /**
+ * @file offset_ptr.h
+ * @brief Offset-based shared-memory pointer conversion and resolution helpers.
+ */
+
+/**
  * @name Shared-Memory Resident Value Types
  *
  * These types are safe to embed inside shared-memory-resident metadata because
@@ -25,6 +30,13 @@ typedef struct {
     /** Offset from the shared-memory base address. Zero is the null sentinel. */
     uint64_t offset;
 } OffsetPtr;
+
+/**@}*/
+
+/**
+ * @name Offset Pointer Helpers
+ * @{
+ */
 
 /**
  * @brief Returns the canonical null offset pointer.
@@ -111,6 +123,6 @@ bool offset_ptr_try_resolve_const(
  */
 bool offset_ptr_is_in_bounds(size_t region_size, OffsetPtr ptr, size_t span);
 
-/**@}*/
+/** @} */
 
 #endif
