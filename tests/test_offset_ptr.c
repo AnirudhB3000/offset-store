@@ -5,6 +5,16 @@
 #include "unity.h"
 
 /**
+ * @file test_offset_ptr.c
+ * @brief Unity tests for offset-pointer conversion and resolution helpers.
+ */
+
+/**
+ * @name Unity Lifecycle Hooks
+ * @{
+ */
+
+/**
  * @brief Provides per-test setup for Unity.
  */
 void setUp(void)
@@ -17,6 +27,13 @@ void setUp(void)
 void tearDown(void)
 {
 }
+
+/** @} */
+
+/**
+ * @name Deterministic Test Cases
+ * @{
+ */
 
 /**
  * @brief Verifies that the null sentinel uses offset zero.
@@ -99,6 +116,13 @@ static void test_const_resolution(void)
     TEST_ASSERT_EQUAL_PTR(&region[4], resolved);
 }
 
+/** @} */
+
+/**
+ * @name Test Runner
+ * @{
+ */
+
 /**
  * @brief Runs the offset-pointer unit tests.
  *
@@ -115,3 +139,5 @@ int main(void)
     RUN_TEST(test_const_resolution);
     return UNITY_END();
 }
+
+/** @} */

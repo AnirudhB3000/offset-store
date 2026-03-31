@@ -13,6 +13,16 @@
 #include "unity.h"
 
 /**
+ * @file test_shm_region.c
+ * @brief Unity tests for shared-memory region lifecycle and synchronization.
+ */
+
+/**
+ * @name Unity Lifecycle Hooks
+ * @{
+ */
+
+/**
  * @brief Provides per-test setup for Unity.
  */
 void setUp(void)
@@ -25,6 +35,13 @@ void setUp(void)
 void tearDown(void)
 {
 }
+
+/** @} */
+
+/**
+ * @name Shared Test Helpers
+ * @{
+ */
 
 /**
  * @brief Builds a unique shared-memory name for one test case.
@@ -45,6 +62,13 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     TEST_ASSERT_TRUE(written > 0);
     TEST_ASSERT_TRUE((size_t) written < buffer_size);
 }
+
+/** @} */
+
+/**
+ * @name Deterministic Test Cases
+ * @{
+ */
 
 /**
  * @brief Verifies that region creation initializes shared header metadata.
@@ -362,6 +386,13 @@ static void test_region_getters_reject_invalid_arguments(void)
     TEST_ASSERT_EQUAL_UINT64(0, shm_region_usable_size(&zero_region));
 }
 
+/** @} */
+
+/**
+ * @name Test Runner
+ * @{
+ */
+
 /**
  * @brief Runs the shared-region unit tests.
  *
@@ -382,3 +413,5 @@ int main(void)
     RUN_TEST(test_region_getters_reject_invalid_arguments);
     return UNITY_END();
 }
+
+/** @} */

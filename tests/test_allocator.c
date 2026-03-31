@@ -11,6 +11,16 @@
 #include "unity.h"
 
 /**
+ * @file test_allocator.c
+ * @brief Unity tests for shared-memory allocator behavior and churn stress.
+ */
+
+/**
+ * @name Unity Lifecycle Hooks
+ * @{
+ */
+
+/**
  * @brief Provides per-test setup for Unity.
  */
 void setUp(void)
@@ -23,6 +33,13 @@ void setUp(void)
 void tearDown(void)
 {
 }
+
+/** @} */
+
+/**
+ * @name Shared Test Helpers
+ * @{
+ */
 
 /**
  * @brief Builds a unique shared-memory name for one allocator test.
@@ -59,6 +76,13 @@ static size_t allocator_stress_size_for(unsigned int worker_index, unsigned int 
     size_count = sizeof(sizes) / sizeof(sizes[0]);
     return sizes[(worker_index + iteration) % size_count];
 }
+
+/** @} */
+
+/**
+ * @name Stress Worker Helpers
+ * @{
+ */
 
 /**
  * @brief Executes allocator churn work inside one child process.
@@ -137,6 +161,13 @@ static int run_allocator_stress_worker(const char *region_name, unsigned int wor
 
     return 0;
 }
+
+/** @} */
+
+/**
+ * @name Deterministic Test Cases
+ * @{
+ */
 
 /**
  * @brief Verifies allocator initialization and validation on a fresh region.
@@ -561,6 +592,13 @@ static void test_allocator_churn_stress_multi_process(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
+/** @} */
+
+/**
+ * @name Test Runner
+ * @{
+ */
+
 /**
  * @brief Runs the allocator unit tests.
  *
@@ -584,3 +622,5 @@ int main(void)
     RUN_TEST(test_allocator_churn_stress_multi_process);
     return UNITY_END();
 }
+
+/** @} */

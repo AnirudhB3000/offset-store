@@ -5,6 +5,16 @@
 #include "unity.h"
 
 /**
+ * @file test_offset_store.c
+ * @brief Unity tests for public status-string helpers.
+ */
+
+/**
+ * @name Unity Lifecycle Hooks
+ * @{
+ */
+
+/**
  * @brief Provides per-test setup for Unity.
  */
 void setUp(void)
@@ -17,6 +27,13 @@ void setUp(void)
 void tearDown(void)
 {
 }
+
+/** @} */
+
+/**
+ * @name Deterministic Test Cases
+ * @{
+ */
 
 /**
  * @brief Verifies that every public status code has a readable string.
@@ -32,6 +49,13 @@ static void test_status_strings(void)
     TEST_ASSERT_NOT_NULL(offset_store_status_string(OFFSET_STORE_STATUS_SYSTEM_ERROR));
 }
 
+/** @} */
+
+/**
+ * @name Test Runner
+ * @{
+ */
+
 /**
  * @brief Runs the status-string unit tests.
  *
@@ -43,3 +67,5 @@ int main(void)
     RUN_TEST(test_status_strings);
     return UNITY_END();
 }
+
+/** @} */

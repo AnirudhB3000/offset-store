@@ -11,6 +11,16 @@
 #include "unity.h"
 
 /**
+ * @file test_store_stress.c
+ * @brief Unity stress tests for mixed multi-process store activity.
+ */
+
+/**
+ * @name Unity Lifecycle Hooks
+ * @{
+ */
+
+/**
  * @brief Provides per-test setup for Unity.
  */
 void setUp(void)
@@ -23,6 +33,13 @@ void setUp(void)
 void tearDown(void)
 {
 }
+
+/** @} */
+
+/**
+ * @name Shared Test Helpers
+ * @{
+ */
 
 /**
  * @brief Builds a unique shared-memory name for one lifecycle test.
@@ -118,6 +135,13 @@ static size_t mixed_stress_payload_size_for(unsigned int iteration)
 
     return sizes[iteration % (sizeof(sizes) / sizeof(sizes[0]))];
 }
+
+/** @} */
+
+/**
+ * @name Stress Worker Helpers
+ * @{
+ */
 
 /**
  * @brief Fills a shared object payload with a deterministic marker.
@@ -318,6 +342,13 @@ static int run_mixed_publisher_stress_worker(
 
     return 0;
 }
+
+/** @} */
+
+/**
+ * @name Stress Test Cases
+ * @{
+ */
 
 /**
  * @brief Runs a mixed read-side stress worker for the full-system stress test.
@@ -657,6 +688,13 @@ static void test_mixed_full_system_stress(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
+/** @} */
+
+/**
+ * @name Test Runner
+ * @{
+ */
+
 /**
  * @brief Runs the store stress tests.
  *
@@ -668,3 +706,5 @@ int main(void)
     RUN_TEST(test_mixed_full_system_stress);
     return UNITY_END();
 }
+
+/** @} */

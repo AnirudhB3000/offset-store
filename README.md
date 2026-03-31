@@ -27,7 +27,9 @@ implementation helpers, tests, and examples. Public headers also use grouped
 `@name ... @{ ... @}` sections so related APIs appear together in both the
 source and generated documentation. The same grouping style now also applies to
 the main implementation `.c` files so private layout structs, internal helpers,
-and exported entry points are sectioned consistently.
+and exported entry points are sectioned consistently. The Unity test files now
+follow the same convention, grouping lifecycle hooks, shared helpers, worker
+helpers, test cases, and test runners with Doxygen sections.
 
 The polished getter/accessor APIs now also have explicit regression coverage in
 the unit tests so naming and contract behavior stay stable during future cleanup.
@@ -371,6 +373,10 @@ Current build entry points:
 - `make examples` builds `build/producer` and `build/consumer`
 - `make test` builds and runs the default deterministic unit/integration suite
 - `make stress` builds and runs the heavier stress-oriented test binaries
+- `make test-asan` builds and runs tests with AddressSanitizer instrumentation
+- `make test-ubsan` builds and runs tests with UndefinedBehaviorSanitizer instrumentation
+- `make test-sanitize` builds and runs tests with both ASan and UBSan instrumentation
+- `make stress-asan`, `make stress-ubsan`, `make stress-sanitize` for sanitizer-backed stress tests
 - `make clean` removes `build/`
 
 Continuous integration:
@@ -407,8 +413,17 @@ Recommended debugging workflow:
   allocation/free churn, root/index publication, concurrent readers, and
   periodic validation/stat snapshots while tolerating expected out-of-memory
   skips during the churn phase
+- the crash simulation tests (`test_crash_simulation_stress`) verify allocator
+  and object-store behavior under simulated crash scenarios including child
+  process termination, multi-process churn with forced termination, and
+  orphan allocation handling
+- the corruption handling tests (`test_corruption_handling`) verify that validation
+  and mutation APIs correctly detect, reject, and handle various forms of
+  data corruption including corrupted allocator headers, invalid free lists,
+  damaged block headers, and invalid offset pointers
 - attach `gdb` to the example binaries for step-by-step shared-memory inspection
 - run the test or example binaries under `valgrind` when investigating memory misuse
+- use `make test-sanitize` for memory safety checking during development
 - inspect `/dev/shm` to confirm POSIX shared-memory objects are being created and removed
 
 Current public error-reporting direction:

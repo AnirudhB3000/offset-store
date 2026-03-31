@@ -13,6 +13,16 @@
 #include "unity.h"
 
 /**
+ * @file test_object_store.c
+ * @brief Unity tests for shared-memory object allocation and resolution.
+ */
+
+/**
+ * @name Unity Lifecycle Hooks
+ * @{
+ */
+
+/**
  * @brief Provides per-test setup for Unity.
  */
 void setUp(void)
@@ -25,6 +35,13 @@ void setUp(void)
 void tearDown(void)
 {
 }
+
+/** @} */
+
+/**
+ * @name Shared Test Helpers
+ * @{
+ */
 
 /**
  * @brief Builds a unique shared-memory name for one object-store test.
@@ -45,6 +62,13 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     TEST_ASSERT_TRUE(written > 0);
     TEST_ASSERT_TRUE((size_t) written < buffer_size);
 }
+
+/** @} */
+
+/**
+ * @name Deterministic Test Cases
+ * @{
+ */
 
 /**
  * @brief Verifies the fixed object header size and alignment contract.
@@ -289,6 +313,13 @@ static void test_object_getters_reject_invalid_arguments(void)
     TEST_ASSERT_NULL(object_store_get_payload(NULL, null_object));
 }
 
+/** @} */
+
+/**
+ * @name Test Runner
+ * @{
+ */
+
 /**
  * @brief Runs the object-store unit tests.
  *
@@ -308,3 +339,5 @@ int main(void)
     RUN_TEST(test_object_getters_reject_invalid_arguments);
     return UNITY_END();
 }
+
+/** @} */

@@ -12,6 +12,16 @@
 #include "unity.h"
 
 /**
+ * @file test_store.c
+ * @brief Unity tests for deterministic store lifecycle and discovery behavior.
+ */
+
+/**
+ * @name Unity Lifecycle Hooks
+ * @{
+ */
+
+/**
  * @brief Provides per-test setup for Unity.
  */
 void setUp(void)
@@ -24,6 +34,13 @@ void setUp(void)
 void tearDown(void)
 {
 }
+
+/** @} */
+
+/**
+ * @name Shared Test Helpers
+ * @{
+ */
 
 /**
  * @brief Builds a unique shared-memory name for one lifecycle test.
@@ -70,6 +87,13 @@ static const char *stress_index_key_for(unsigned int iteration)
 
     return keys[iteration % (sizeof(keys) / sizeof(keys[0]))];
 }
+
+/** @} */
+
+/**
+ * @name Stress Worker Helpers
+ * @{
+ */
 
 /**
  * @brief Runs one root-writer stress worker process.
@@ -229,6 +253,13 @@ static int run_directory_reader_stress_worker(const char *region_name, OffsetPtr
 
     return 0;
 }
+
+/** @} */
+
+/**
+ * @name Deterministic Test Cases
+ * @{
+ */
 
 
 /**
@@ -769,6 +800,13 @@ static void test_roots_and_index_reader_writer_contention_stress(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
 }
 
+/** @} */
+
+/**
+ * @name Test Runner
+ * @{
+ */
+
 /**
  * @brief Runs the store lifecycle unit tests.
  *
@@ -792,3 +830,5 @@ int main(void)
     RUN_TEST(test_roots_and_index_reader_writer_contention_stress);
     return UNITY_END();
 }
+
+/** @} */

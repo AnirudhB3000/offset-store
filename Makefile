@@ -13,7 +13,15 @@ STRESS_BINS := $(patsubst tests/%.c,$(BUILD_DIR)/%,$(STRESS_SOURCES))
 EXAMPLE_SOURCES := $(wildcard examples/*.c)
 EXAMPLE_BINS := $(patsubst examples/%.c,$(BUILD_DIR)/%,$(EXAMPLE_SOURCES))
 
+SANITIZE_CFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -g
+ASAN_CFLAGS := -fsanitize=address -fno-omit-frame-pointer -g
+UBSAN_CFLAGS := -fsanitize=undefined -fno-omit-frame-pointer -g
+SANITIZE_LDFLAGS := -fsanitize=address,undefined
+
 .PHONY: all test stress examples clean dirs
+.PHONY: test-asan test-ubsan test-sanitize
+.PHONY: stress-asan stress-ubsan stress-sanitize
+.PHONY: build-asan build-ubsan build-sanitize
 
 all: dirs examples
 
@@ -80,3 +88,94 @@ $(BUILD_DIR)/%: examples/%.c $(SRC_SOURCES)
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+$(BUILD_DIR)/%-asan: tests/%.c $(SRC_SOURCES)
+	$(CC) $(CFLAGS) $(ASAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(ASAN_CFLAGS)
+
+$(BUILD_DIR)/%-ubsan: tests/%.c $(SRC_SOURCES)
+	$(CC) $(CFLAGS) $(UBSAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(UBSAN_CFLAGS)
+
+$(BUILD_DIR)/%-sanitize: tests/%.c $(SRC_SOURCES)
+	$(CC) $(CFLAGS) $(SANITIZE_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(SANITIZE_LDFLAGS)
+
+build-asan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(TEST_SOURCES) $(STRESS_SOURCES))
+build-ubsan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(TEST_SOURCES) $(STRESS_SOURCES))
+build-sanitize: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(TEST_SOURCES) $(STRESS_SOURCES))
+
+test-asan: dirs
+	@failed_bins=0; \
+	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(TEST_BINS)); do \
+		output=`./$$test_bin 2>&1`; \
+		status=$$?; \
+		printf '%s\n' "$$output"; \
+		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
+		if [ $$status -ne 0 ] || echo "$$output" | grep -q "ERROR: AddressSanitizer"; then \
+			failed_bins=`expr $$failed_bins + 1`; \
+		fi; \
+	done; \
+	test $$failed_bins -eq 0
+
+test-ubsan: dirs
+	@failed_bins=0; \
+	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(TEST_BINS)); do \
+		output=`./$$test_bin 2>&1`; \
+		status=$$?; \
+		printf '%s\n' "$$output"; \
+		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
+		if [ $$status -ne 0 ] || echo "$$output" | grep -q "runtime error"; then \
+			failed_bins=`expr $$failed_bins + 1`; \
+		fi; \
+	done; \
+	test $$failed_bins -eq 0
+
+test-sanitize: dirs
+	@failed_bins=0; \
+	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(TEST_BINS)); do \
+		output=`./$$test_bin 2>&1`; \
+		status=$$?; \
+		printf '%s\n' "$$output"; \
+		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
+		if [ $$status -ne 0 ] || echo "$$output" | grep -qE "(AddressSanitizer|runtime error)"; then \
+			failed_bins=`expr $$failed_bins + 1`; \
+		fi; \
+	done; \
+	test $$failed_bins -eq 0
+
+stress-asan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(STRESS_BINS))
+	@failed_bins=0; \
+	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(STRESS_BINS)); do \
+		output=`./$$test_bin 2>&1`; \
+		status=$$?; \
+		printf '%s\n' "$$output"; \
+		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
+		if [ $$status -ne 0 ] || echo "$$output" | grep -q "ERROR: AddressSanitizer"; then \
+			failed_bins=`expr $$failed_bins + 1`; \
+		fi; \
+	done; \
+	test $$failed_bins -eq 0
+
+stress-ubsan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(STRESS_BINS))
+	@failed_bins=0; \
+	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(STRESS_BINS)); do \
+		output=`./$$test_bin 2>&1`; \
+		status=$$?; \
+		printf '%s\n' "$$output"; \
+		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
+		if [ $$status -ne 0 ] || echo "$$output" | grep -q "runtime error"; then \
+			failed_bins=`expr $$failed_bins + 1`; \
+		fi; \
+	done; \
+	test $$failed_bins -eq 0
+
+stress-sanitize: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(STRESS_BINS))
+	@failed_bins=0; \
+	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(STRESS_BINS)); do \
+		output=`./$$test_bin 2>&1`; \
+		status=$$?; \
+		printf '%s\n' "$$output"; \
+		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
+		if [ $$status -ne 0 ] || echo "$$output" | grep -qE "(AddressSanitizer|runtime error)"; then \
+			failed_bins=`expr $$failed_bins + 1`; \
+		fi; \
+	done; \
+	test $$failed_bins -eq 0
