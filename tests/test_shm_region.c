@@ -44,6 +44,22 @@ void tearDown(void)
  */
 
 /**
+ * @brief Fixed offsets used to corrupt public shared-region header fields in tests.
+ *
+ * These offsets match the documented stable scalar prefix of the private
+ * region header and let the tests simulate corruption without depending on the
+ * private typedef itself.
+ */
+enum {
+    /** Offset of the shared region version field from the region base. */
+    TEST_REGION_VERSION_OFFSET = 8,
+    /** Offset of the shared region state-flags field from the region base. */
+    TEST_REGION_STATE_FLAGS_OFFSET = 12,
+    /** Offset of the shared region header checksum field from the region base. */
+    TEST_REGION_CHECKSUM_OFFSET = 32
+};
+
+/**
  * @brief Builds a unique shared-memory name for one test case.
  *
  * @param buffer Destination buffer.
@@ -61,6 +77,34 @@ static void make_region_name(char *buffer, size_t buffer_size, const char *suffi
     written = snprintf(buffer, buffer_size, "/offset-store-%ld-%s", (long) getpid(), suffix);
     TEST_ASSERT_TRUE(written > 0);
     TEST_ASSERT_TRUE((size_t) written < buffer_size);
+}
+
+/**
+ * @brief Returns a mutable pointer to one 32-bit header field at a fixed offset.
+ *
+ * @param region Region whose mapped bytes should be inspected.
+ * @param offset Byte offset from the region base.
+ * @return Mutable 32-bit field pointer.
+ */
+static uint32_t *region_u32_field(ShmRegion *region, size_t offset)
+{
+    TEST_ASSERT_NOT_NULL(region);
+    TEST_ASSERT_NOT_NULL(region->base);
+    return (uint32_t *) ((unsigned char *) region->base + offset);
+}
+
+/**
+ * @brief Returns a mutable pointer to one 64-bit header field at a fixed offset.
+ *
+ * @param region Region whose mapped bytes should be inspected.
+ * @param offset Byte offset from the region base.
+ * @return Mutable 64-bit field pointer.
+ */
+static uint64_t *region_u64_field(ShmRegion *region, size_t offset)
+{
+    TEST_ASSERT_NOT_NULL(region);
+    TEST_ASSERT_NOT_NULL(region->base);
+    return (uint64_t *) ((unsigned char *) region->base + offset);
 }
 
 /** @} */
@@ -160,6 +204,52 @@ static void test_open_rejects_invalid_header(void)
 }
 
 /**
+ * @brief Verifies that attach rejects regions whose state flags are not ready.
+ */
+static void test_open_rejects_invalid_region_state_flags(void)
+{
+    char name[64];
+    ShmRegion region;
+    ShmRegion reopened;
+    uint32_t *state_flags;
+
+    make_region_name(name, sizeof(name), "invalid-state");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    state_flags = region_u32_field(&region, TEST_REGION_STATE_FLAGS_OFFSET);
+    *state_flags = 0;
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, shm_region_open(&reopened, name));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies that attach rejects regions with a corrupted header checksum.
+ */
+static void test_open_rejects_invalid_header_checksum(void)
+{
+    char name[64];
+    ShmRegion region;
+    ShmRegion reopened;
+    uint64_t *checksum;
+
+    make_region_name(name, sizeof(name), "invalid-checksum");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    checksum = region_u64_field(&region, TEST_REGION_CHECKSUM_OFFSET);
+    *checksum ^= UINT64_C(0x1);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, shm_region_open(&reopened, name));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
  * @brief Verifies the public region validation helper on valid and corrupted headers.
  */
 static void test_region_validate_reports_header_integrity(void)
@@ -198,6 +288,28 @@ static void test_region_validate_accepts_busy_subsystem_lock(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_roots_lock(&region));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_validate(&region));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_roots_unlock(&region));
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
+/**
+ * @brief Verifies that root and index updates refresh the header checksum.
+ */
+static void test_region_validate_accepts_root_and_index_updates(void)
+{
+    char name[64];
+    ShmRegion region;
+    OffsetPtr object;
+
+    make_region_name(name, sizeof(name), "validate-directory");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    object.offset = shm_region_header_size();
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_set_root(&region, "root", object));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_index_put(&region, "key", object));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_validate(&region));
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
@@ -404,8 +516,11 @@ int main(void)
     RUN_TEST(test_create_initializes_header);
     RUN_TEST(test_open_observes_existing_mapping);
     RUN_TEST(test_open_rejects_invalid_header);
+    RUN_TEST(test_open_rejects_invalid_region_state_flags);
+    RUN_TEST(test_open_rejects_invalid_header_checksum);
     RUN_TEST(test_region_validate_reports_header_integrity);
     RUN_TEST(test_region_validate_accepts_busy_subsystem_lock);
+    RUN_TEST(test_region_validate_accepts_root_and_index_updates);
     RUN_TEST(test_process_shared_roots_read_lock_allows_parallel_readers);
     RUN_TEST(test_create_rejects_too_small_region);
     RUN_TEST(test_process_shared_allocator_mutex_coordinates_access);

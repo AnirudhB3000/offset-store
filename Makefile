@@ -34,6 +34,7 @@ test: dirs $(TEST_BINS)
 	total_ignored=0; \
 	failed_bins=0; \
 	for test_bin in $(TEST_BINS); do \
+		printf 'Running %s\n' "$$test_bin"; \
 		output=`./$$test_bin`; \
 		status=$$?; \
 		printf '%s\n' "$$output"; \
@@ -59,6 +60,7 @@ stress: dirs $(STRESS_BINS)
 	total_ignored=0; \
 	failed_bins=0; \
 	for test_bin in $(STRESS_BINS); do \
+		printf 'Running %s\n' "$$test_bin"; \
 		output=`./$$test_bin`; \
 		status=$$?; \
 		printf '%s\n' "$$output"; \
@@ -105,6 +107,7 @@ build-sanitize: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(TEST_SOURCES
 test-asan: dirs
 	@failed_bins=0; \
 	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(TEST_BINS)); do \
+		printf 'Running %s\n' "$$test_bin"; \
 		output=`./$$test_bin 2>&1`; \
 		status=$$?; \
 		printf '%s\n' "$$output"; \
@@ -118,6 +121,7 @@ test-asan: dirs
 test-ubsan: dirs
 	@failed_bins=0; \
 	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(TEST_BINS)); do \
+		printf 'Running %s\n' "$$test_bin"; \
 		output=`./$$test_bin 2>&1`; \
 		status=$$?; \
 		printf '%s\n' "$$output"; \
@@ -131,6 +135,7 @@ test-ubsan: dirs
 test-sanitize: dirs
 	@failed_bins=0; \
 	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(TEST_BINS)); do \
+		printf 'Running %s\n' "$$test_bin"; \
 		output=`./$$test_bin 2>&1`; \
 		status=$$?; \
 		printf '%s\n' "$$output"; \
@@ -144,6 +149,7 @@ test-sanitize: dirs
 stress-asan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(STRESS_BINS))
 	@failed_bins=0; \
 	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(STRESS_BINS)); do \
+		printf 'Running %s\n' "$$test_bin"; \
 		output=`./$$test_bin 2>&1`; \
 		status=$$?; \
 		printf '%s\n' "$$output"; \
@@ -157,6 +163,7 @@ stress-asan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(STRESS_BINS))
 stress-ubsan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(STRESS_BINS))
 	@failed_bins=0; \
 	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(STRESS_BINS)); do \
+		printf 'Running %s\n' "$$test_bin"; \
 		output=`./$$test_bin 2>&1`; \
 		status=$$?; \
 		printf '%s\n' "$$output"; \
@@ -170,6 +177,7 @@ stress-ubsan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(STRESS_BINS))
 stress-sanitize: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(STRESS_BINS))
 	@failed_bins=0; \
 	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(STRESS_BINS)); do \
+		printf 'Running %s\n' "$$test_bin"; \
 		output=`./$$test_bin 2>&1`; \
 		status=$$?; \
 		printf '%s\n' "$$output"; \

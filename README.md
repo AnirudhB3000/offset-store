@@ -31,6 +31,20 @@ and exported entry points are sectioned consistently. The Unity test files now
 follow the same convention, grouping lifecycle hooks, shared helpers, worker
 helpers, test cases, and test runners with Doxygen sections.
 
+The allocator mutex is now configured as a robust process-shared mutex on
+platforms that support `pthread_mutexattr_setrobust(...)`. If a process dies
+while holding that mutex, the next allocator lock attempt returns
+`OFFSET_STORE_STATUS_INVALID_STATE` after marking the mutex consistent and
+releasing it so callers can validate or repair shared state before retrying.
+The roots and index rwlocks remain non-robust because portable POSIX rwlock
+owner-death recovery is not available.
+
+The private shared region header now also carries stable metadata beyond just
+magic and version: a region state-flags field, a generation counter, and a
+checksum over the stable header bytes plus the inline root/index tables. Attach
+and validation paths reject regions that are not fully ready or whose stable
+metadata has been corrupted.
+
 The polished getter/accessor APIs now also have explicit regression coverage in
 the unit tests so naming and contract behavior stay stable during future cleanup.
 
@@ -120,6 +134,7 @@ Current implemented `shm_region` responsibilities:
 - create a new shared memory object and size it with `ftruncate`
 - map a region with `mmap`
 - store and validate a fixed private region header at the start of the mapping
+- record region state flags, a generation counter, and a stable-header checksum
 - initialize and expose the process-shared allocator mutex plus the roots/index rwlocks stored in the region header
 - store a fixed-capacity named root table for well-known shared objects
 - store a fixed-capacity shared index table for general key-to-object discovery
@@ -399,20 +414,25 @@ Example flow:
 Recommended debugging workflow:
 
 - use `make test` as the baseline correctness check
+- `make test` and `make stress` now print `Running build/test_...` before each
+  binary so slow or stuck suites are easy to identify
 - use `make stress` for heavier soak-style concurrency coverage that is kept
   out of the default `make test` path
 - the allocator test binary now includes a multi-process churn stress test that
   forks several workers, repeatedly allocates and frees varied payload sizes,
   and then checks allocator validation plus final heap stats in the parent
 - the store test binary now includes a roots/index reader-writer contention
-  stress test with concurrent writers and lookup readers to exercise the
-  current directory rwlock model under load
+  stress test with pre-attached worker processes, concurrent writers, and
+  lookup readers to exercise the current directory rwlock model under load
 - the dedicated `test_store_stress` binary run by `make stress` includes a
   mixed full-system stress test that
   begins with a synchronized stable-publication phase and then combines object
   allocation/free churn, root/index publication, concurrent readers, and
-  periodic validation/stat snapshots while tolerating expected out-of-memory
-  skips during the churn phase
+  periodic allocator-stat snapshots with final quiescent whole-store
+  validation, while tolerating expected out-of-memory skips during the churn
+  phase
+- the lock contention stress binary now runs as a proper Unity suite and uses
+  real pthread worker return statuses instead of process-exit shortcuts
 - the crash simulation tests (`test_crash_simulation_stress`) verify allocator
   and object-store behavior under simulated crash scenarios including child
   process termination, multi-process churn with forced termination, and
@@ -421,10 +441,22 @@ Recommended debugging workflow:
   and mutation APIs correctly detect, reject, and handle various forms of
   data corruption including corrupted allocator headers, invalid free lists,
   damaged block headers, and invalid offset pointers
+- the lock contention tests (`test_lock_contention_stress`) verify that the
+  locking model works correctly under multi-threaded load, exercising
+  allocator mutex contention, roots rwlock contention, index rwlock contention,
+  and mixed-subsystem lock contention scenarios
 - attach `gdb` to the example binaries for step-by-step shared-memory inspection
 - run the test or example binaries under `valgrind` when investigating memory misuse
 - use `make test-sanitize` for memory safety checking during development
 - inspect `/dev/shm` to confirm POSIX shared-memory objects are being created and removed
+
+Note on portability:
+
+- the robust allocator-mutex implementation is enabled in the library where the
+  platform supports it
+- a direct owner-death regression was removed from the default test suite
+  because process-shared robust mutex recovery is not portable enough to keep
+  `make test` deterministic across environments
 
 Current public error-reporting direction:
 
@@ -586,6 +618,44 @@ Current implemented synchronization behavior:
   and contains plus write locks for put/remove
 - there is no multi-lock public operation yet, so current operations do not
   require cross-subsystem lock ordering
+
+**Evaluation of read-write synchronization and atomic fast paths:**
+
+The current design uses a separate rwlock for the roots table and another for the
+index table, providing natural read-write semantics:
+
+- Roots lookups use read locks, allowing concurrent readers when no writer is present
+- Index lookups similarly benefit from concurrent readers
+- Write operations (set_root, remove_root, index_put, index_remove) acquire write
+  locks, serializing with readers and other writers
+
+This design was chosen because:
+
+1. Read-heavy workloads benefit from rwlock semantics - multiple processes can
+   simultaneously query roots or indexes without blocking each other
+2. The fixed-capacity tables are small (typically < 100 entries), so linear scan
+   under read lock is acceptable
+3. The rwlock is POSIX-standard and process-shared compatible
+
+Alternative designs considered and reasons for deferral:
+
+- **Lock-free hash tables**: Attractive for high-contention scenarios but add
+  significant complexity; the current fixed-array design keeps layout simple
+- **Atomic operations on individual entries**: Would require careful atomic
+  CAS semantics on the shared offset pointers; currently safe because rwlock
+  provides atomic visibility
+- **Seperate read/write paths in allocator**: The allocator mutation path is
+  already fast-path optimized; adding read locks would not improve throughput
+  since allocation/free are inherently write operations
+
+Future considerations:
+
+- If roots/index tables grow beyond hundreds of entries, switching to a lock-free
+  hash table could improve lookup scalability
+- For read-heavy allocation metadata (stats), a readers-writer mutex or atomic
+  counters could reduce read lock contention
+- Atomic fast paths could be added for simple increment operations (e.g., keeping
+  allocation failure counts in atomics rather than requiring the full mutex)
 
 Canonical lock order for any future multi-lock path:
 

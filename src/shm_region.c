@@ -17,11 +17,31 @@
  */
 
 static const uint64_t OFFSET_STORE_REGION_MAGIC = UINT64_C(0x4f464653544f5245);
+static const uint64_t OFFSET_STORE_REGION_CHECKSUM_SEED = UINT64_C(1469598103934665603);
+static const uint64_t OFFSET_STORE_REGION_CHECKSUM_MULTIPLIER = UINT64_C(1099511628211);
+
+#if defined(PTHREAD_MUTEX_ROBUST)
+#define OFFSET_STORE_PTHREAD_MUTEX_ROBUST_VALUE PTHREAD_MUTEX_ROBUST
+#elif defined(PTHREAD_MUTEX_ROBUST_NP)
+#define OFFSET_STORE_PTHREAD_MUTEX_ROBUST_VALUE PTHREAD_MUTEX_ROBUST_NP
+#endif
 
 /**
  * @name Private Shared-Memory Layout
  * @{
  */
+
+/**
+ * @brief Private state-flag bits stored in the shared region header.
+ */
+enum {
+    /** Region creator is still initializing shared metadata. */
+    OFFSET_STORE_REGION_STATE_INITIALIZING = UINT32_C(1) << 0,
+    /** Region header has been fully initialized and is attachable. */
+    OFFSET_STORE_REGION_STATE_READY = UINT32_C(1) << 1,
+    /** Reserved for future dirty-shutdown or recovery markers. */
+    OFFSET_STORE_REGION_STATE_DIRTY = UINT32_C(1) << 2
+};
 
 /**
  * @brief Private fixed-size root table entry stored in the shared region header.
@@ -68,10 +88,14 @@ typedef struct {
     uint64_t magic;
     /** Region layout version expected by this binary. */
     uint32_t version;
-    /** Reserved field for future expansion. */
-    uint32_t reserved;
+    /** Region state flags describing initialization and recovery state. */
+    uint32_t state_flags;
+    /** Generation counter for the current initialized region contents. */
+    uint64_t generation;
     /** Total mapped size in bytes. */
     uint64_t total_size;
+    /** Checksum covering stable header metadata and inline discovery tables. */
+    uint64_t header_checksum;
     /** Process-shared mutex protecting allocator metadata and heap mutation. */
     pthread_mutex_t allocator_mutex;
     /** Process-shared rwlock protecting the fixed root table. */
@@ -90,6 +114,14 @@ typedef struct {
  * @name Internal Helpers
  * @{
  */
+
+/**
+ * @brief Computes the checksum for the stable portions of the shared region header.
+ *
+ * @param header Shared region header to checksum.
+ * @return Computed checksum value, or zero on failure.
+ */
+static uint64_t shm_region_compute_header_checksum(const ShmRegionHeader *header);
 
 /**
  * @brief Resets a process-local region descriptor to its empty state.
@@ -174,11 +206,19 @@ static bool shm_region_validate_header(const ShmRegion *region)
         return false;
     }
 
+    if (header->state_flags != OFFSET_STORE_REGION_STATE_READY) {
+        return false;
+    }
+
+    if (header->generation == 0) {
+        return false;
+    }
+
     if (header->total_size != (uint64_t) region->size) {
         return false;
     }
 
-    return true;
+    return header->header_checksum == shm_region_compute_header_checksum(header);
 }
 
 /**
@@ -203,6 +243,14 @@ static bool shm_region_validate_mutex(pthread_mutex_t *mutex)
     if (result == 0) {
         return pthread_mutex_unlock(mutex) == 0;
     }
+
+#if defined(EOWNERDEAD)
+    if (result == EOWNERDEAD) {
+        (void) pthread_mutex_consistent(mutex);
+        (void) pthread_mutex_unlock(mutex);
+        return false;
+    }
+#endif
 
     return result == EBUSY;
 }
@@ -371,6 +419,83 @@ static ShmRegionIndexEntry *shm_region_index(ShmRegionHeader *header)
     }
 
     return header->index;
+}
+
+/** @} */
+
+/**
+ * @name Header Metadata Helpers
+ * @{
+ */
+
+/**
+ * @brief Updates one running FNV-1a checksum with a byte span.
+ *
+ * @param checksum Running checksum value.
+ * @param data Bytes to incorporate.
+ * @param size Number of bytes to incorporate.
+ * @return Updated checksum value.
+ */
+static uint64_t shm_region_checksum_bytes(uint64_t checksum, const void *data, size_t size)
+{
+    const unsigned char *bytes;
+    size_t index;
+
+    if (data == NULL) {
+        return checksum;
+    }
+
+    bytes = (const unsigned char *) data;
+    for (index = 0; index < size; ++index) {
+        checksum ^= (uint64_t) bytes[index];
+        checksum *= OFFSET_STORE_REGION_CHECKSUM_MULTIPLIER;
+    }
+
+    return checksum;
+}
+
+/**
+ * @brief Computes the checksum for the stable portions of the shared region header.
+ *
+ * The checksum intentionally excludes the pthread synchronization primitives
+ * because their internal bytes are runtime-managed and may change while the
+ * region remains structurally valid. The checksum instead covers the stable
+ * scalar metadata plus the inline root and index tables.
+ *
+ * @param header Shared region header to checksum.
+ * @return Computed checksum value, or zero on failure.
+ */
+static uint64_t shm_region_compute_header_checksum(const ShmRegionHeader *header)
+{
+    uint64_t checksum;
+
+    if (header == NULL) {
+        return 0;
+    }
+
+    checksum = OFFSET_STORE_REGION_CHECKSUM_SEED;
+    checksum = shm_region_checksum_bytes(checksum, &header->magic, sizeof(header->magic));
+    checksum = shm_region_checksum_bytes(checksum, &header->version, sizeof(header->version));
+    checksum = shm_region_checksum_bytes(checksum, &header->state_flags, sizeof(header->state_flags));
+    checksum = shm_region_checksum_bytes(checksum, &header->generation, sizeof(header->generation));
+    checksum = shm_region_checksum_bytes(checksum, &header->total_size, sizeof(header->total_size));
+    checksum = shm_region_checksum_bytes(checksum, header->roots, sizeof(header->roots));
+    checksum = shm_region_checksum_bytes(checksum, header->index, sizeof(header->index));
+    return checksum;
+}
+
+/**
+ * @brief Recomputes and stores the stable-header checksum after metadata changes.
+ *
+ * @param header Shared region header to update.
+ */
+static void shm_region_refresh_header_checksum(ShmRegionHeader *header)
+{
+    if (header == NULL) {
+        return;
+    }
+
+    header->header_checksum = shm_region_compute_header_checksum(header);
 }
 
 /** @} */
@@ -546,6 +671,13 @@ static OffsetStoreStatus shm_region_init_one_mutex(pthread_mutex_t *mutex)
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
+#if defined(OFFSET_STORE_PTHREAD_MUTEX_ROBUST_VALUE)
+    if (pthread_mutexattr_setrobust(&attr, OFFSET_STORE_PTHREAD_MUTEX_ROBUST_VALUE) != 0) {
+        pthread_mutexattr_destroy(&attr);
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+#endif
+
     if (pthread_mutex_init(mutex, &attr) != 0) {
         pthread_mutexattr_destroy(&attr);
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
@@ -660,9 +792,11 @@ OffsetStoreStatus shm_region_create(ShmRegion *out_region, const char *name, siz
      * validate that the mapping matches the expected format.
      */
     header = shm_region_header_mut(out_region);
+    memset(header, 0, sizeof(*header));
     header->magic = OFFSET_STORE_REGION_MAGIC;
     header->version = OFFSET_STORE_REGION_VERSION;
-    header->reserved = 0;
+    header->state_flags = OFFSET_STORE_REGION_STATE_INITIALIZING;
+    header->generation = 1;
     header->total_size = (uint64_t) out_region->size;
     shm_region_init_roots(header);
     shm_region_init_index(header);
@@ -672,6 +806,9 @@ OffsetStoreStatus shm_region_create(ShmRegion *out_region, const char *name, siz
         shm_unlink(name);
         return status;
     }
+
+    header->state_flags = OFFSET_STORE_REGION_STATE_READY;
+    shm_region_refresh_header_checksum(header);
     return OFFSET_STORE_STATUS_OK;
 }
 
@@ -775,11 +912,28 @@ OffsetStoreStatus shm_region_unlink(const char *name)
  */
 static OffsetStoreStatus shm_region_lock_one(pthread_mutex_t *mutex)
 {
+    int result;
+
     if (mutex == NULL) {
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
-    if (pthread_mutex_lock(mutex) != 0) {
+    result = pthread_mutex_lock(mutex);
+#if defined(EOWNERDEAD)
+    if (result == EOWNERDEAD) {
+        if (pthread_mutex_consistent(mutex) != 0) {
+            return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+        }
+
+        if (pthread_mutex_unlock(mutex) != 0) {
+            return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+        }
+
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+#endif
+
+    if (result != 0) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
@@ -1213,6 +1367,7 @@ OffsetStoreStatus shm_region_set_root(ShmRegion *region, const char *name, Offse
     memset(entry->name, 0, sizeof(entry->name));
     memcpy(entry->name, name, strlen(name));
     entry->object = object;
+    shm_region_refresh_header_checksum(header);
 
     return shm_region_roots_unlock(region);
 }
@@ -1292,6 +1447,7 @@ OffsetStoreStatus shm_region_remove_root(ShmRegion *region, const char *name)
     memset(entry->reserved, 0, sizeof(entry->reserved));
     memset(entry->name, 0, sizeof(entry->name));
     entry->object = offset_ptr_null();
+    shm_region_refresh_header_checksum(header);
 
     return shm_region_roots_unlock(region);
 }
@@ -1339,6 +1495,7 @@ OffsetStoreStatus shm_region_index_put(ShmRegion *region, const char *key, Offse
     memset(entry->key, 0, sizeof(entry->key));
     memcpy(entry->key, key, strlen(key));
     entry->object = object;
+    shm_region_refresh_header_checksum(header);
 
     return shm_region_index_unlock(region);
 }
@@ -1449,6 +1606,7 @@ OffsetStoreStatus shm_region_index_remove(ShmRegion *region, const char *key)
     memset(entry->reserved, 0, sizeof(entry->reserved));
     memset(entry->key, 0, sizeof(entry->key));
     entry->object = offset_ptr_null();
+    shm_region_refresh_header_checksum(header);
 
     return shm_region_index_unlock(region);
 }

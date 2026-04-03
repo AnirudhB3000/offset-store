@@ -27,8 +27,10 @@ The private `ShmRegionHeader` currently contains:
 typedef struct {
     uint64_t magic;
     uint32_t version;
-    uint32_t reserved;
+    uint32_t state_flags;
+    uint64_t generation;
     uint64_t total_size;
+    uint64_t header_checksum;
     pthread_mutex_t allocator_mutex;
     pthread_rwlock_t roots_rwlock;
     pthread_rwlock_t index_rwlock;
@@ -44,6 +46,14 @@ Important points:
 - the public `ShmRegion` struct is process-local and must never be stored in the
   mapping
 - the allocator mutex and roots/index rwlocks are configured with `PTHREAD_PROCESS_SHARED`
+- the allocator mutex also uses robust-owner recovery when the platform
+  supports `pthread_mutexattr_setrobust(...)`
+- `state_flags` records whether the header is still initializing or fully ready
+- `generation` records the initialized contents generation for the region and
+  currently starts at `1` for a freshly created region
+- `header_checksum` covers the stable scalar header metadata plus the inline
+  roots/index tables, but intentionally excludes the runtime-managed pthread
+  lock bytes
 - allocator mutation uses `allocator_mutex`
 - root-table operations use `roots_rwlock`
 - shared-index operations use `index_rwlock`
@@ -53,12 +63,17 @@ Important points:
   key-to-object discovery without allocator recursion
 - attach paths validate `magic`, `version`, and `total_size` before the region
   is considered usable
+- attach/validate also require a ready state flag, a nonzero generation, and a
+  matching stable-header checksum
 - callers now have both `shm_region_data(...)` and `shm_region_data_const(...)`
   so read-only access does not require casting away const intent
 - `shm_region_validate(...)` now exposes the private header integrity check as a
   public status-returning helper
 - `shm_region_validate(...)` also verifies that the allocator mutex and the
   roots/index rwlocks are operational
+- if the allocator mutex reports owner death, the lock helper marks it
+  consistent, releases it, and returns `OFFSET_STORE_STATUS_INVALID_STATE`
+  so higher-level code can validate or repair shared state before retrying
 - if a future operation ever needs more than one subsystem lock, the canonical
   order is allocator, then roots, then index
 

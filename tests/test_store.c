@@ -98,18 +98,37 @@ static const char *stress_index_key_for(unsigned int iteration)
 /**
  * @brief Runs one root-writer stress worker process.
  *
- * @param region_name Shared-memory region name to open.
+ * @param store Pre-opened store descriptor inherited by the worker process.
  * @param object Object handle to publish under rotating root names.
  * @param iterations Number of update iterations to execute.
+ * @param ready_fd Pipe descriptor used to signal that attach completed.
+ * @param start_fd Pipe descriptor used to wait for the parent start signal.
  * @return Process exit code for the worker.
  */
-static int run_root_writer_stress_worker(const char *region_name, OffsetPtr object, unsigned int iterations)
+static int run_root_writer_stress_worker(
+    OffsetStore *store,
+    OffsetPtr object,
+    unsigned int iterations,
+    int ready_fd,
+    int start_fd
+)
 {
-    OffsetStore store;
     unsigned int iteration;
+    char signal_byte;
 
-    if (offset_store_open_existing(&store, region_name) != OFFSET_STORE_STATUS_OK) {
+    if (store == NULL) {
         return 20;
+    }
+
+    signal_byte = 'r';
+    if (write(ready_fd, &signal_byte, 1) != 1) {
+        (void) offset_store_close(store);
+        return 24;
+    }
+
+    if (read(start_fd, &signal_byte, 1) != 1) {
+        (void) offset_store_close(store);
+        return 25;
     }
 
     for (iteration = 0; iteration < iterations; ++iteration) {
@@ -117,22 +136,22 @@ static int run_root_writer_stress_worker(const char *region_name, OffsetPtr obje
         OffsetStoreStatus status;
 
         root_name = stress_root_name_for(iteration);
-        status = offset_store_set_root(&store, root_name, object);
+        status = offset_store_set_root(store, root_name, object);
         if (status != OFFSET_STORE_STATUS_OK) {
-            (void) offset_store_close(&store);
+            (void) offset_store_close(store);
             return 21;
         }
 
         if ((iteration % 3u) == 0u) {
-            status = offset_store_remove_root(&store, root_name);
+            status = offset_store_remove_root(store, root_name);
             if (status != OFFSET_STORE_STATUS_OK) {
-                (void) offset_store_close(&store);
+                (void) offset_store_close(store);
                 return 22;
             }
         }
     }
 
-    if (offset_store_close(&store) != OFFSET_STORE_STATUS_OK) {
+    if (offset_store_close(store) != OFFSET_STORE_STATUS_OK) {
         return 23;
     }
 
@@ -142,18 +161,37 @@ static int run_root_writer_stress_worker(const char *region_name, OffsetPtr obje
 /**
  * @brief Runs one index-writer stress worker process.
  *
- * @param region_name Shared-memory region name to open.
+ * @param store Pre-opened store descriptor inherited by the worker process.
  * @param object Object handle to publish under rotating index keys.
  * @param iterations Number of update iterations to execute.
+ * @param ready_fd Pipe descriptor used to signal that attach completed.
+ * @param start_fd Pipe descriptor used to wait for the parent start signal.
  * @return Process exit code for the worker.
  */
-static int run_index_writer_stress_worker(const char *region_name, OffsetPtr object, unsigned int iterations)
+static int run_index_writer_stress_worker(
+    OffsetStore *store,
+    OffsetPtr object,
+    unsigned int iterations,
+    int ready_fd,
+    int start_fd
+)
 {
-    OffsetStore store;
     unsigned int iteration;
+    char signal_byte;
 
-    if (offset_store_open_existing(&store, region_name) != OFFSET_STORE_STATUS_OK) {
+    if (store == NULL) {
         return 30;
+    }
+
+    signal_byte = 'i';
+    if (write(ready_fd, &signal_byte, 1) != 1) {
+        (void) offset_store_close(store);
+        return 34;
+    }
+
+    if (read(start_fd, &signal_byte, 1) != 1) {
+        (void) offset_store_close(store);
+        return 35;
     }
 
     for (iteration = 0; iteration < iterations; ++iteration) {
@@ -161,22 +199,22 @@ static int run_index_writer_stress_worker(const char *region_name, OffsetPtr obj
         OffsetStoreStatus status;
 
         key = stress_index_key_for(iteration);
-        status = offset_store_index_put(&store, key, object);
+        status = offset_store_index_put(store, key, object);
         if (status != OFFSET_STORE_STATUS_OK) {
-            (void) offset_store_close(&store);
+            (void) offset_store_close(store);
             return 31;
         }
 
         if ((iteration % 4u) == 0u) {
-            status = offset_store_index_remove(&store, key);
+            status = offset_store_index_remove(store, key);
             if (status != OFFSET_STORE_STATUS_OK) {
-                (void) offset_store_close(&store);
+                (void) offset_store_close(store);
                 return 32;
             }
         }
     }
 
-    if (offset_store_close(&store) != OFFSET_STORE_STATUS_OK) {
+    if (offset_store_close(store) != OFFSET_STORE_STATUS_OK) {
         return 33;
     }
 
@@ -186,18 +224,37 @@ static int run_index_writer_stress_worker(const char *region_name, OffsetPtr obj
 /**
  * @brief Runs one reader stress worker process for roots and index entries.
  *
- * @param region_name Shared-memory region name to open.
+ * @param store Pre-opened store descriptor inherited by the worker process.
  * @param expected_object Object handle that may appear when an entry is present.
  * @param iterations Number of lookup iterations to execute.
+ * @param ready_fd Pipe descriptor used to signal that attach completed.
+ * @param start_fd Pipe descriptor used to wait for the parent start signal.
  * @return Process exit code for the worker.
  */
-static int run_directory_reader_stress_worker(const char *region_name, OffsetPtr expected_object, unsigned int iterations)
+static int run_directory_reader_stress_worker(
+    OffsetStore *store,
+    OffsetPtr expected_object,
+    unsigned int iterations,
+    int ready_fd,
+    int start_fd
+)
 {
-    OffsetStore store;
     unsigned int iteration;
+    char signal_byte;
 
-    if (offset_store_open_existing(&store, region_name) != OFFSET_STORE_STATUS_OK) {
+    if (store == NULL) {
         return 40;
+    }
+
+    signal_byte = 'd';
+    if (write(ready_fd, &signal_byte, 1) != 1) {
+        (void) offset_store_close(store);
+        return 47;
+    }
+
+    if (read(start_fd, &signal_byte, 1) != 1) {
+        (void) offset_store_close(store);
+        return 48;
     }
 
     for (iteration = 0; iteration < iterations; ++iteration) {
@@ -210,31 +267,31 @@ static int run_directory_reader_stress_worker(const char *region_name, OffsetPtr
         root_name = stress_root_name_for(iteration);
         index_key = stress_index_key_for(iteration);
 
-        status = offset_store_get_root(&store, root_name, &resolved_object);
+        status = offset_store_get_root(store, root_name, &resolved_object);
         if (status == OFFSET_STORE_STATUS_OK) {
             if (resolved_object.offset != expected_object.offset) {
-                (void) offset_store_close(&store);
+                (void) offset_store_close(store);
                 return 41;
             }
         } else if (status != OFFSET_STORE_STATUS_NOT_FOUND) {
-            (void) offset_store_close(&store);
+            (void) offset_store_close(store);
             return 42;
         }
 
-        status = offset_store_index_contains(&store, index_key, &contains);
+        status = offset_store_index_contains(store, index_key, &contains);
         if (status != OFFSET_STORE_STATUS_OK) {
-            (void) offset_store_close(&store);
+            (void) offset_store_close(store);
             return 43;
         }
 
-        status = offset_store_index_get(&store, index_key, &resolved_object);
+        status = offset_store_index_get(store, index_key, &resolved_object);
         if (status == OFFSET_STORE_STATUS_OK) {
             if (resolved_object.offset != expected_object.offset) {
-                (void) offset_store_close(&store);
+                (void) offset_store_close(store);
                 return 44;
             }
         } else if (status != OFFSET_STORE_STATUS_NOT_FOUND) {
-            (void) offset_store_close(&store);
+            (void) offset_store_close(store);
             return 45;
         }
 
@@ -247,7 +304,7 @@ static int run_directory_reader_stress_worker(const char *region_name, OffsetPtr
         (void) contains;
     }
 
-    if (offset_store_close(&store) != OFFSET_STORE_STATUS_OK) {
+    if (offset_store_close(store) != OFFSET_STORE_STATUS_OK) {
         return 46;
     }
 
@@ -742,14 +799,19 @@ static void test_roots_and_index_reader_writer_contention_stress(void)
         root_writer_iterations = 400,
         index_writer_iterations = 400,
         reader_iterations = 800,
-        reader_count = 3
+        reader_count = 3,
+        worker_count = 2 + reader_count
     };
 
     char name[64];
     OffsetStore store;
+    OffsetStore worker_stores[worker_count];
     OffsetPtr shared_object;
-    pid_t child_pids[2 + reader_count];
+    pid_t child_pids[worker_count];
+    int ready_pipes[worker_count][2];
+    int start_pipes[worker_count][2];
     size_t child_index;
+    char signal_byte;
 
     make_region_name(name, sizeof(name), "store-directory-stress");
     TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
@@ -760,24 +822,84 @@ static void test_roots_and_index_reader_writer_contention_stress(void)
         object_store_alloc(&store.region, 18, 64, &shared_object)
     );
 
+    for (child_index = 0; child_index < worker_count; ++child_index) {
+        TEST_ASSERT_EQUAL_INT(
+            OFFSET_STORE_STATUS_OK,
+            offset_store_open_existing(&worker_stores[child_index], name)
+        );
+    }
+
+    for (child_index = 0; child_index < worker_count; ++child_index) {
+        TEST_ASSERT_EQUAL_INT(0, pipe(ready_pipes[child_index]));
+        TEST_ASSERT_EQUAL_INT(0, pipe(start_pipes[child_index]));
+    }
+
     child_pids[0] = fork();
     TEST_ASSERT_TRUE(child_pids[0] >= 0);
     if (child_pids[0] == 0) {
-        _exit(run_root_writer_stress_worker(name, shared_object, root_writer_iterations));
+        close(ready_pipes[0][0]);
+        close(start_pipes[0][1]);
+        _exit(
+            run_root_writer_stress_worker(
+                &worker_stores[0],
+                shared_object,
+                root_writer_iterations,
+                ready_pipes[0][1],
+                start_pipes[0][0]
+            )
+        );
     }
+    close(ready_pipes[0][1]);
+    close(start_pipes[0][0]);
 
     child_pids[1] = fork();
     TEST_ASSERT_TRUE(child_pids[1] >= 0);
     if (child_pids[1] == 0) {
-        _exit(run_index_writer_stress_worker(name, shared_object, index_writer_iterations));
+        close(ready_pipes[1][0]);
+        close(start_pipes[1][1]);
+        _exit(
+            run_index_writer_stress_worker(
+                &worker_stores[1],
+                shared_object,
+                index_writer_iterations,
+                ready_pipes[1][1],
+                start_pipes[1][0]
+            )
+        );
     }
+    close(ready_pipes[1][1]);
+    close(start_pipes[1][0]);
 
     for (child_index = 0; child_index < reader_count; ++child_index) {
         child_pids[2 + child_index] = fork();
         TEST_ASSERT_TRUE(child_pids[2 + child_index] >= 0);
         if (child_pids[2 + child_index] == 0) {
-            _exit(run_directory_reader_stress_worker(name, shared_object, reader_iterations));
+            close(ready_pipes[2 + child_index][0]);
+            close(start_pipes[2 + child_index][1]);
+            _exit(
+                run_directory_reader_stress_worker(
+                    &worker_stores[2 + child_index],
+                    shared_object,
+                    reader_iterations,
+                    ready_pipes[2 + child_index][1],
+                    start_pipes[2 + child_index][0]
+                )
+            );
         }
+
+        close(ready_pipes[2 + child_index][1]);
+        close(start_pipes[2 + child_index][0]);
+    }
+
+    for (child_index = 0; child_index < worker_count; ++child_index) {
+        TEST_ASSERT_EQUAL_INT(1, read(ready_pipes[child_index][0], &signal_byte, 1));
+        close(ready_pipes[child_index][0]);
+    }
+
+    for (child_index = 0; child_index < worker_count; ++child_index) {
+        signal_byte = 's';
+        TEST_ASSERT_EQUAL_INT(1, write(start_pipes[child_index][1], &signal_byte, 1));
+        close(start_pipes[child_index][1]);
     }
 
     for (child_index = 0; child_index < sizeof(child_pids) / sizeof(child_pids[0]); ++child_index) {
@@ -795,6 +917,10 @@ static void test_roots_and_index_reader_writer_contention_stress(void)
     }
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_validate(&store));
+
+    for (child_index = 0; child_index < worker_count; ++child_index) {
+        TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&worker_stores[child_index]));
+    }
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, offset_store_close(&store));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));

@@ -46,7 +46,7 @@ typedef struct {
  * @brief Public region layout version stored in the shared header.
  */
 enum {
-    OFFSET_STORE_REGION_VERSION = 5
+    OFFSET_STORE_REGION_VERSION = 6
 };
 
 /**
@@ -121,6 +121,10 @@ OffsetStoreStatus shm_region_unlink(const char *name);
  *
  * This backward-compatible helper now maps to the allocator lock so existing
  * callers that need explicit allocator serialization continue to work.
+ * On platforms that support robust process-shared mutexes, owner death is
+ * surfaced as `OFFSET_STORE_STATUS_INVALID_STATE` after the mutex has been
+ * marked consistent and released so callers can validate or repair state
+ * before retrying.
  *
  * @param region Region whose allocator mutex should be locked.
  * @return Status code describing success or failure.
@@ -138,6 +142,11 @@ OffsetStoreStatus shm_region_lock(ShmRegion *region);
 OffsetStoreStatus shm_region_unlock(ShmRegion *region);
 /**
  * @brief Acquires the allocator subsystem mutex.
+ *
+ * On platforms that support robust process-shared mutexes, owner death is
+ * surfaced as `OFFSET_STORE_STATUS_INVALID_STATE` after the mutex has been
+ * marked consistent and released so callers can validate or repair state
+ * before retrying.
  *
  * @param region Region whose allocator mutex should be locked.
  * @return Status code describing success or failure.
@@ -196,8 +205,9 @@ OffsetStoreStatus shm_region_index_unlock(ShmRegion *region);
  * @brief Validates the private shared region header for an attached mapping.
  *
  * This check verifies that the mapped region contains the expected magic,
- * layout version, total-size metadata, an operational allocator mutex, and
- * operational roots/index rwlocks for the current binary.
+ * layout version, state flags, generation counter, header checksum,
+ * total-size metadata, an operational allocator mutex, and operational
+ * roots/index rwlocks for the current binary.
  *
  * @param region Region descriptor to validate.
  * @return Status code describing success or failure.

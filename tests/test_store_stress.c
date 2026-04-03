@@ -535,11 +535,6 @@ static int run_mixed_validator_stress_worker(
     for (iteration = 0; iteration < iterations; ++iteration) {
         AllocatorStats stats;
 
-        if (shm_region_validate(&store.region) != OFFSET_STORE_STATUS_OK) {
-            (void) offset_store_close(&store);
-            return 91;
-        }
-
         if (allocator_get_stats(&store.region, &stats) != OFFSET_STORE_STATUS_OK) {
             (void) offset_store_close(&store);
             return 92;

@@ -46,8 +46,10 @@ kept private to `src/shm_region.c`, but the current byte layout is:
 typedef struct {
     uint64_t magic;
     uint32_t version;
-    uint32_t reserved;
+    uint32_t state_flags;
+    uint64_t generation;
     uint64_t total_size;
+    uint64_t header_checksum;
     pthread_mutex_t allocator_mutex;
     pthread_rwlock_t roots_rwlock;
     pthread_rwlock_t index_rwlock;
@@ -60,8 +62,11 @@ Fields:
 
 - `magic`: identifies the mapping as an offset-store region
 - `version`: region layout version
-- `reserved`: padding/reserved space for future use
+- `state_flags`: region initialization state bits stored in shared metadata
+- `generation`: initialized contents generation for the region
 - `total_size`: full mapped region size in bytes
+- `header_checksum`: checksum over the stable scalar header fields plus the
+  inline roots/index tables
 - `allocator_mutex`: process-shared mutex protecting allocator metadata and heap mutation
 - `roots_rwlock`: process-shared rwlock protecting the fixed root table
 - `index_rwlock`: process-shared rwlock protecting the fixed index table
@@ -76,6 +81,8 @@ Behavior:
 - validated by `shm_region_open`
 - re-checked by `shm_region_validate(...)`, which verifies that all subsystem
   synchronization primitives appear operational
+- attach and validate require the header to be in the ready state with a
+  nonzero generation and a matching stable-header checksum
 - used by allocator mutation paths through `shm_region_allocator_lock(...)` and
   `shm_region_allocator_unlock(...)`
 - stores named root bindings used by `offset_store_set_root(...)`,
@@ -87,8 +94,13 @@ Behavior:
 Failure notes:
 
 - if the header is corrupted, `shm_region_open` rejects the mapping
-- the allocator mutex and roots/index rwlocks are process-shared but not yet configured as robust, so crash
-  recovery is still a future concern
+- the allocator mutex is process-shared and uses robust-owner recovery on
+  platforms that support `pthread_mutexattr_setrobust(...)`
+- if a process dies while holding the allocator mutex, the next allocator lock
+  attempt returns invalid state after marking the mutex consistent and
+  releasing it so callers can validate or repair shared data before retrying
+- the roots/index rwlocks are process-shared but remain non-robust because
+  portable rwlock owner-death recovery is not available
 - roots are not automatically invalidated when the pointed-to object is freed, so
   callers must keep object lifetime and root bindings consistent
 
