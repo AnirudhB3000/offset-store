@@ -19,9 +19,11 @@
  */
 enum {
     /** Shared allocator layout version stored in private allocator metadata. */
-    OFFSET_STORE_ALLOCATOR_VERSION = 2,
+    OFFSET_STORE_ALLOCATOR_VERSION = 3,
     /** Flag indicating that a heap block is currently free. */
-    OFFSET_STORE_ALLOCATOR_BLOCK_FREE = 1u
+    OFFSET_STORE_ALLOCATOR_BLOCK_FREE = 1u,
+    /** Number of shards for sharded locking. Must be power of 2. */
+    OFFSET_STORE_ALLOCATOR_SHARD_COUNT = 4u
 };
 
 /**

@@ -652,20 +652,25 @@ Future considerations:
 
 - If roots/index tables grow beyond hundreds of entries, switching to a lock-free
   hash table could improve lookup scalability
-- For read-heavy allocation metadata (stats), a readers-writer mutex or atomic
-  counters could reduce read lock contention
-- Atomic fast paths could be added for simple increment operations (e.g., keeping
-  allocation failure counts in atomics rather than requiring the full mutex)
+- Atomic fast paths have been added for simple increment operations: the
+  `allocation_failures` counter in `AllocatorHeader` uses `_Atomic`
+  with `memory_order_relaxed` to allow lock-free reads without requiring
+  the full allocator mutex
+- Sharded locking has been implemented for the allocator: the heap is
+  partitioned into N shards (currently 4), each with its own process-shared
+  mutex and free list. This reduces contention under high-load multi-process
+  scenarios by allowing concurrent allocations from different shards.
+  Shard selection uses size-based routing to improve locality.
 
 Canonical lock order for any future multi-lock path:
 
-- allocator
+- allocator (any shard mutex)
 - roots
 - index
 
 Current internal-locking contract:
 
-- acquires the allocator mutex internally:
+- acquires one of the shard mutexes (sharded locking):
   `allocator_init(...)`, `allocator_alloc(...)`, `allocator_free(...)`
 - acquires the roots rwlock internally:
   `shm_region_set_root(...)`, `shm_region_get_root(...)`,

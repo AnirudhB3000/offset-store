@@ -166,7 +166,7 @@ static void test_allocator_validate_rejects_free_list_head_outside_heap(void)
 {
     char name[64];
     ShmRegion region;
-    uint64_t *free_list_head_field;
+    uint64_t *shard_free_list_head_field;
 
     make_region_name(name, sizeof(name), "corrupt-freelist-head");
     TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
@@ -175,8 +175,8 @@ static void test_allocator_validate_rejects_free_list_head_outside_heap(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_validate(&region));
 
-    free_list_head_field = (uint64_t *) ((unsigned char *) region.base + shm_region_header_size() + 32);
-    *free_list_head_field = region.size + 1;
+    shard_free_list_head_field = (uint64_t *) ((unsigned char *) region.base + shm_region_header_size() + 192);
+    *shard_free_list_head_field = region.size + 1;
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, allocator_validate(&region));
 
@@ -191,7 +191,7 @@ static void test_allocator_alloc_rejects_invalid_free_list_head(void)
 {
     char name[64];
     ShmRegion region;
-    uint64_t *free_list_head_field;
+    uint64_t *shard_free_list_head_field;
     void *ptr;
 
     make_region_name(name, sizeof(name), "corrupt-alloc-freelist");
@@ -200,8 +200,8 @@ static void test_allocator_alloc_rejects_invalid_free_list_head(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
 
-    free_list_head_field = (uint64_t *) ((unsigned char *) region.base + shm_region_header_size() + 32);
-    *free_list_head_field = region.size;
+    shard_free_list_head_field = (uint64_t *) ((unsigned char *) region.base + shm_region_header_size() + 192);
+    *shard_free_list_head_field = region.size;
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, allocator_alloc(&region, 32, 16, &ptr));
 
@@ -417,6 +417,7 @@ static void test_allocator_free_rejects_already_free_block(void)
     ShmRegion region;
     void *ptr;
     uint32_t *block_flags;
+    uint64_t *block_offset_ptr;
 
     make_region_name(name, sizeof(name), "corrupt-double-free");
     TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
@@ -425,7 +426,8 @@ static void test_allocator_free_rejects_already_free_block(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 32, 16, &ptr));
 
-    block_flags = (uint32_t *) ((unsigned char *) ptr - 32 + 16);
+    block_offset_ptr = (uint64_t *) ((unsigned char *) ptr - 8);
+    block_flags = (uint32_t *) ((unsigned char *) region.base + *block_offset_ptr + 16);
     *block_flags = 1;
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_STATE, allocator_free(&region, ptr));
@@ -443,6 +445,7 @@ static void test_allocator_free_rejects_mismatched_payload(void)
     ShmRegion region;
     void *ptr;
     uint32_t *payload_offset;
+    uint64_t *block_offset_ptr;
 
     make_region_name(name, sizeof(name), "corrupt-mismatch");
     TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
@@ -451,7 +454,8 @@ static void test_allocator_free_rejects_mismatched_payload(void)
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 64, 16, &ptr));
 
-    payload_offset = (uint32_t *) ((unsigned char *) ptr - 32 + 20);
+    block_offset_ptr = (uint64_t *) ((unsigned char *) ptr - 8);
+    payload_offset = (uint32_t *) ((unsigned char *) region.base + *block_offset_ptr + 24);
     *payload_offset = 1;
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_INVALID_ARGUMENT, allocator_free(&region, ptr));

@@ -404,8 +404,8 @@ static void test_allocator_stats_track_free_and_used_bytes(void)
     TEST_ASSERT_EQUAL_UINT64(initial_stats.heap_size, initial_stats.free_bytes + initial_stats.used_bytes);
     TEST_ASSERT_EQUAL_UINT64(initial_stats.heap_size, initial_stats.free_bytes);
     TEST_ASSERT_EQUAL_UINT64(0, initial_stats.used_bytes);
-    TEST_ASSERT_EQUAL_UINT64(1, initial_stats.free_block_count);
-    TEST_ASSERT_EQUAL_UINT64(initial_stats.free_bytes, initial_stats.largest_free_block);
+    TEST_ASSERT_EQUAL_UINT64(4, initial_stats.free_block_count);
+    TEST_ASSERT_TRUE(initial_stats.free_bytes >= initial_stats.largest_free_block);
     TEST_ASSERT_EQUAL_UINT64(0, initial_stats.allocation_failures);
 
     TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 96, 16, &allocation));

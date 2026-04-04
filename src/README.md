@@ -104,22 +104,30 @@ depends on process-local addresses being stable across attaches.
 
 ### Shared Layout
 
-The allocator stores a private `AllocatorHeader` after the region header:
+The allocator stores a private `AllocatorHeader` after the region header.
+The allocator uses sharded locking: the heap is partitioned into N shards,
+each with its own process-shared mutex and free list.
 
 ```c
+enum {
+    OFFSET_STORE_ALLOCATOR_SHARD_COUNT = 4
+};
+
 typedef struct {
     uint64_t magic;
     uint32_t version;
-    uint32_t reserved;
+    uint32_t shard_count;
     uint64_t heap_offset;
     uint64_t heap_size;
-    OffsetPtr free_list_head;
-    uint64_t allocation_failures;
+    pthread_mutex_t shard_mutexes[OFFSET_STORE_ALLOCATOR_SHARD_COUNT];
+    OffsetPtr shard_free_list_heads[OFFSET_STORE_ALLOCATOR_SHARD_COUNT];
+    _Atomic uint64_t allocation_failures;
 } AllocatorHeader;
 ```
 
-The heap begins at `heap_offset`, aligned to `max_align_t`. The allocator then
-walks the heap as a physical sequence of variable-sized blocks.
+The heap begins at `heap_offset`, aligned to `max_align_t`. Each shard owns
+a contiguous portion of the heap. The allocator walks the heap as a physical
+sequence of variable-sized blocks.
 
 Each heap block starts with:
 
@@ -128,9 +136,12 @@ typedef struct {
     uint64_t size;
     OffsetPtr next_free;
     uint32_t flags;
+    uint32_t shard;
     uint32_t payload_offset;
 } AllocatorBlockHeader;
 ```
+
+The `shard` field identifies which shard's free list this block belongs to.
 
 Meaning of the fields:
 
@@ -178,10 +189,11 @@ does not need to store a raw pointer to the owning block; it recovers the block
 later by reading the stored offset and resolving it relative to the current
 mapping base.
 
-If no free block can satisfy the request, the allocator increments the persistent
-`allocation_failures` counter in `AllocatorHeader` before returning
-`OFFSET_STORE_STATUS_OUT_OF_MEMORY`. Invalid-argument failures do not affect that
-counter.
+If no free block can satisfy the request, the allocator atomically increments the
+persistent `_Atomic uint64_t allocation_failures` counter in `AllocatorHeader` 
+before returning `OFFSET_STORE_STATUS_OUT_OF_MEMORY`. The atomic uses 
+`memory_order_relaxed` for lock-free performance. Invalid-argument failures 
+do not affect that counter.
 
 ### Free Path
 

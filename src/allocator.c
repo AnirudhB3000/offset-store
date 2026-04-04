@@ -1,11 +1,13 @@
 #include "offset_store/allocator.h"
 
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdalign.h>
 
 /**
  * @file allocator.c
- * @brief Shared-memory allocator implementation.
+ * @brief Shared-memory allocator implementation with sharded locking.
  */
 
 /**
@@ -15,22 +17,28 @@
 
 /**
  * @brief Private allocator metadata stored in shared memory.
+ *
+ * Uses sharded locking: heap is partitioned into N shards, each with its own
+ * mutex and free list. This reduces contention under high-load multi-process
+ * scenarios by allowing concurrent allocations from different shards.
  */
 typedef struct {
     /** Magic value identifying initialized allocator metadata. */
     uint64_t magic;
     /** Allocator layout version. */
     uint32_t version;
-    /** Reserved field for future expansion. */
-    uint32_t reserved;
+    /** Number of shards configured (for validation). */
+    uint32_t shard_count;
     /** Offset from the region base to the first heap block. */
     uint64_t heap_offset;
     /** Total heap size in bytes. */
     uint64_t heap_size;
-    /** Free-list head stored as an offset pointer. */
-    OffsetPtr free_list_head;
+    /** Shard-specific mutexes protecting each free list. */
+    pthread_mutex_t shard_mutexes[OFFSET_STORE_ALLOCATOR_SHARD_COUNT];
+    /** Shard-specific free-list heads. */
+    OffsetPtr shard_free_list_heads[OFFSET_STORE_ALLOCATOR_SHARD_COUNT];
     /** Cumulative count of allocation attempts that could not be satisfied. */
-    uint64_t allocation_failures;
+    _Atomic uint64_t allocation_failures;
 } AllocatorHeader;
 
 /**
@@ -43,6 +51,8 @@ typedef struct {
     OffsetPtr next_free;
     /** Block flags such as `OFFSET_STORE_ALLOCATOR_BLOCK_FREE`. */
     uint32_t flags;
+    /** Shard index this block belongs to (0 to SHARD_COUNT-1). */
+    uint32_t shard;
     /** Byte offset from the block start to the live payload. */
     uint32_t payload_offset;
 } AllocatorBlockHeader;
@@ -58,6 +68,12 @@ typedef struct {
 /** @} */
 
 static const uint64_t OFFSET_STORE_ALLOCATOR_MAGIC = UINT64_C(0x4f464653414c4c43);
+
+#if defined(PTHREAD_MUTEX_ROBUST)
+#define OFFSET_STORE_PTHREAD_MUTEX_ROBUST_VALUE PTHREAD_MUTEX_ROBUST
+#elif defined(PTHREAD_MUTEX_ROBUST_NP)
+#define OFFSET_STORE_PTHREAD_MUTEX_ROBUST_VALUE PTHREAD_MUTEX_ROBUST_NP
+#endif
 
 /**
  * @name Internal Helpers
@@ -120,6 +136,55 @@ static size_t allocator_min_block_size(void)
      */
     min_block_size = sizeof(AllocatorBlockHeader) + sizeof(AllocationPrefix) + alignof(max_align_t);
     return min_block_size;
+}
+
+/**
+ * @brief Selects a shard index for a given allocation request.
+ *
+ * Uses size-based routing: larger allocations tend to use higher-indexed shards
+ * to improve locality. Combines with a simple hash of the request size to
+ * distribute similar-sized allocations across shards.
+ *
+ * @param size Requested allocation size in bytes.
+ * @return Shard index in range [0, SHARD_COUNT).
+ */
+static uint32_t allocator_select_shard(size_t size)
+{
+    uint32_t shard;
+    size_t hash;
+
+    hash = size ^ (size >> 17);
+    shard = (uint32_t)(hash & (OFFSET_STORE_ALLOCATOR_SHARD_COUNT - 1));
+    return shard;
+}
+
+/**
+ * @brief Returns the heap offset where a given shard begins.
+ *
+ * @param heap_offset Offset where overall heap starts.
+ * @param heap_size Total heap size in bytes.
+ * @param shard Index of the shard.
+ * @return Byte offset from region base where shard begins.
+ */
+static uint64_t allocator_shard_heap_offset(uint64_t heap_offset, uint64_t heap_size, uint32_t shard)
+{
+    uint64_t shard_size;
+    uint64_t shard_offset;
+
+    shard_size = heap_size / OFFSET_STORE_ALLOCATOR_SHARD_COUNT;
+    shard_offset = heap_offset + (shard * shard_size);
+    return shard_offset;
+}
+
+/**
+ * @brief Returns the size of a single shard's heap region.
+ *
+ * @param heap_size Total heap size in bytes.
+ * @return Size of one shard's heap region in bytes.
+ */
+static uint64_t allocator_shard_heap_size(uint64_t heap_size)
+{
+    return heap_size / OFFSET_STORE_ALLOCATOR_SHARD_COUNT;
 }
 
 /**
@@ -273,7 +338,7 @@ OffsetStoreStatus allocator_get_free_list_head(const ShmRegion *region, OffsetPt
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
-    *out_head = header->free_list_head;
+    *out_head = header->shard_free_list_heads[0];
     return OFFSET_STORE_STATUS_OK;
 }
 
@@ -319,6 +384,10 @@ static bool allocator_header_valid(const ShmRegion *region, const AllocatorHeade
     }
 
     if (header->version != OFFSET_STORE_ALLOCATOR_VERSION) {
+        return false;
+    }
+
+    if (header->shard_count != OFFSET_STORE_ALLOCATOR_SHARD_COUNT) {
         return false;
     }
 
@@ -370,6 +439,9 @@ static bool allocator_block_from_offset(
  * @return true if the offset lies within the heap.
  * @return false otherwise.
  */
+#if defined(__GNUC__)
+__attribute__((unused))
+#endif
 static bool allocator_block_is_in_heap(const AllocatorHeader *header, OffsetPtr block_offset)
 {
     if (header == NULL || offset_ptr_is_null(block_offset)) {
@@ -512,10 +584,11 @@ OffsetStoreStatus allocator_get_allocation_span(const ShmRegion *region, const v
 OffsetStoreStatus allocator_init(ShmRegion *region)
 {
     AllocatorHeader *header;
-    AllocatorBlockHeader *initial_block;
-    OffsetPtr initial_block_offset;
     size_t heap_offset;
     size_t heap_size;
+    uint32_t shard;
+    uint32_t i;
+    pthread_mutexattr_t mutex_attr;
 
     if (region == NULL) {
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
@@ -525,7 +598,8 @@ OffsetStoreStatus allocator_init(ShmRegion *region)
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
-    if (!allocator_region_offsets(region, &heap_offset, &heap_size) || heap_size < allocator_min_block_size()) {
+    if (!allocator_region_offsets(region, &heap_offset, &heap_size) ||
+        heap_size < allocator_min_block_size() * OFFSET_STORE_ALLOCATOR_SHARD_COUNT) {
         shm_region_allocator_unlock(region);
         return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
     }
@@ -541,28 +615,68 @@ OffsetStoreStatus allocator_init(ShmRegion *region)
         return OFFSET_STORE_STATUS_ALREADY_EXISTS;
     }
 
-    header->magic = OFFSET_STORE_ALLOCATOR_MAGIC;
-    header->version = OFFSET_STORE_ALLOCATOR_VERSION;
-    header->reserved = 0;
-    header->heap_offset = heap_offset;
-    header->heap_size = heap_size;
-    header->free_list_head.offset = heap_offset;
-    header->allocation_failures = 0;
-
-    initial_block_offset.offset = heap_offset;
-    if (!allocator_block_from_offset(region, initial_block_offset, &initial_block)) {
+    if (pthread_mutexattr_init(&mutex_attr) != 0) {
         shm_region_allocator_unlock(region);
-        return OFFSET_STORE_STATUS_INVALID_STATE;
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
 
-    /*
-     * The initial heap is one large free block spanning all usable allocator
-     * storage after the fixed metadata area.
-     */
-    initial_block->size = heap_size;
-    initial_block->next_free = offset_ptr_null();
-    initial_block->flags = OFFSET_STORE_ALLOCATOR_BLOCK_FREE;
-    initial_block->payload_offset = 0;
+    if (pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED) != 0) {
+        pthread_mutexattr_destroy(&mutex_attr);
+        shm_region_allocator_unlock(region);
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+#if defined(OFFSET_STORE_PTHREAD_MUTEX_ROBUST_VALUE)
+    (void) pthread_mutexattr_setrobust(&mutex_attr, OFFSET_STORE_PTHREAD_MUTEX_ROBUST_VALUE);
+#endif
+
+    header->magic = OFFSET_STORE_ALLOCATOR_MAGIC;
+    header->version = OFFSET_STORE_ALLOCATOR_VERSION;
+    header->shard_count = OFFSET_STORE_ALLOCATOR_SHARD_COUNT;
+    header->heap_offset = heap_offset;
+    header->heap_size = heap_size;
+    header->allocation_failures = 0;
+
+    for (shard = 0; shard < OFFSET_STORE_ALLOCATOR_SHARD_COUNT; shard++) {
+        if (pthread_mutex_init(&header->shard_mutexes[shard], &mutex_attr) != 0) {
+            for (i = 0; i < shard; i++) {
+                (void) pthread_mutex_destroy(&header->shard_mutexes[i]);
+            }
+            pthread_mutexattr_destroy(&mutex_attr);
+            shm_region_allocator_unlock(region);
+            return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+        }
+    }
+
+    pthread_mutexattr_destroy(&mutex_attr);
+
+    for (shard = 0; shard < OFFSET_STORE_ALLOCATOR_SHARD_COUNT; shard++) {
+        uint64_t shard_heap_offset;
+        uint64_t shard_heap_size;
+        AllocatorBlockHeader *shard_initial_block;
+        OffsetPtr shard_initial_offset;
+
+        shard_heap_offset = allocator_shard_heap_offset(heap_offset, heap_size, shard);
+        shard_heap_size = allocator_shard_heap_size(heap_size);
+
+        header->shard_free_list_heads[shard].offset = shard_heap_offset;
+
+        shard_initial_offset.offset = shard_heap_offset;
+        if (!allocator_block_from_offset(region, shard_initial_offset, &shard_initial_block)) {
+            for (i = 0; i < OFFSET_STORE_ALLOCATOR_SHARD_COUNT; i++) {
+                (void) pthread_mutex_destroy(&header->shard_mutexes[i]);
+            }
+            shm_region_allocator_unlock(region);
+            return OFFSET_STORE_STATUS_INVALID_STATE;
+        }
+
+        shard_initial_block->size = shard_heap_size;
+        shard_initial_block->next_free = offset_ptr_null();
+        shard_initial_block->flags = OFFSET_STORE_ALLOCATOR_BLOCK_FREE;
+        shard_initial_block->shard = shard;
+        shard_initial_block->payload_offset = 0;
+    }
+
     if (shm_region_allocator_unlock(region) != OFFSET_STORE_STATUS_OK) {
         return OFFSET_STORE_STATUS_SYSTEM_ERROR;
     }
@@ -580,7 +694,7 @@ OffsetStoreStatus allocator_validate(const ShmRegion *region)
     const AllocatorHeader *header;
     size_t traversed;
     size_t block_count;
-    OffsetPtr free_cursor;
+    uint32_t shard;
 
     if (region == NULL) {
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
@@ -610,28 +724,50 @@ OffsetStoreStatus allocator_validate(const ShmRegion *region)
             return OFFSET_STORE_STATUS_INVALID_STATE;
         }
 
+        if (block->shard >= OFFSET_STORE_ALLOCATOR_SHARD_COUNT) {
+            return OFFSET_STORE_STATUS_INVALID_STATE;
+        }
+
         traversed += (size_t) block->size;
         block_count += 1;
     }
 
-    free_cursor = header->free_list_head;
-    while (!offset_ptr_is_null(free_cursor)) {
-        AllocatorBlockHeader *free_block;
+    for (shard = 0; shard < OFFSET_STORE_ALLOCATOR_SHARD_COUNT; shard++) {
+        OffsetPtr free_cursor;
+        uint64_t shard_heap_offset;
+        uint64_t shard_heap_size;
 
-        if (block_count == 0 || !allocator_block_is_in_heap(header, free_cursor)) {
-            return OFFSET_STORE_STATUS_INVALID_STATE;
+        shard_heap_offset = allocator_shard_heap_offset(header->heap_offset, header->heap_size, shard);
+        shard_heap_size = allocator_shard_heap_size(header->heap_size);
+
+        free_cursor = header->shard_free_list_heads[shard];
+        while (!offset_ptr_is_null(free_cursor)) {
+            AllocatorBlockHeader *free_block;
+
+            if (block_count == 0) {
+                return OFFSET_STORE_STATUS_INVALID_STATE;
+            }
+
+            if (free_cursor.offset < shard_heap_offset ||
+                free_cursor.offset >= shard_heap_offset + shard_heap_size) {
+                return OFFSET_STORE_STATUS_INVALID_STATE;
+            }
+
+            if (!allocator_block_from_offset(region, free_cursor, &free_block)) {
+                return OFFSET_STORE_STATUS_INVALID_STATE;
+            }
+
+            if ((free_block->flags & OFFSET_STORE_ALLOCATOR_BLOCK_FREE) == 0) {
+                return OFFSET_STORE_STATUS_INVALID_STATE;
+            }
+
+            if (free_block->shard != shard) {
+                return OFFSET_STORE_STATUS_INVALID_STATE;
+            }
+
+            free_cursor = free_block->next_free;
+            block_count -= 1;
         }
-
-        if (!allocator_block_from_offset(region, free_cursor, &free_block)) {
-            return OFFSET_STORE_STATUS_INVALID_STATE;
-        }
-
-        if ((free_block->flags & OFFSET_STORE_ALLOCATOR_BLOCK_FREE) == 0) {
-            return OFFSET_STORE_STATUS_INVALID_STATE;
-        }
-
-        free_cursor = free_block->next_free;
-        block_count -= 1;
     }
 
     return OFFSET_STORE_STATUS_OK;
@@ -649,8 +785,9 @@ OffsetStoreStatus allocator_validate(const ShmRegion *region)
 OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignment, void **out_ptr)
 {
     AllocatorHeader *header;
-    OffsetPtr *link;
-    OffsetPtr current_offset;
+    uint32_t shard;
+    uint32_t attempt;
+    int lock_result;
 
     if (region == NULL || out_ptr == NULL || size == 0) {
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
@@ -664,88 +801,120 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    if (shm_region_allocator_lock(region) != OFFSET_STORE_STATUS_OK) {
-        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
-    }
-
     header = allocator_header_mut(region);
-    if (!allocator_header_valid(region, header)) {
-        shm_region_allocator_unlock(region);
+    if (header == NULL || !allocator_header_valid(region, header)) {
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
-    link = &header->free_list_head;
-    current_offset = header->free_list_head;
-    while (!offset_ptr_is_null(current_offset)) {
-        AllocatorBlockHeader *block;
-        unsigned char *block_bytes;
-        size_t prefix_base;
-        size_t payload_offset;
-        size_t required_size;
-        size_t remaining_size;
+    shard = allocator_select_shard(size);
 
-        if (!allocator_block_is_in_heap(header, current_offset) ||
-            !allocator_block_from_offset(region, current_offset, &block)) {
-            shm_region_allocator_unlock(region);
+    for (attempt = 0; attempt < OFFSET_STORE_ALLOCATOR_SHARD_COUNT; attempt++) {
+        uint32_t try_shard = (shard + attempt) % OFFSET_STORE_ALLOCATOR_SHARD_COUNT;
+        OffsetPtr *link;
+        OffsetPtr current_offset;
+        pthread_mutex_t *shard_mutex;
+
+        shard_mutex = &header->shard_mutexes[try_shard];
+        lock_result = pthread_mutex_lock(shard_mutex);
+#if defined(EOWNERDEAD)
+        if (lock_result == EOWNERDEAD) {
+            (void) pthread_mutex_consistent(shard_mutex);
+        }
+#endif
+        if (lock_result != 0) {
+            return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+        }
+
+        if (!allocator_header_valid(region, header)) {
+            (void) pthread_mutex_unlock(shard_mutex);
             return OFFSET_STORE_STATUS_INVALID_STATE;
         }
 
-        block_bytes = (unsigned char *) block;
-        prefix_base = sizeof(AllocatorBlockHeader) + sizeof(AllocationPrefix);
-        if (!allocator_align_up(prefix_base + (size_t) current_offset.offset, alignment, &payload_offset)) {
-            shm_region_allocator_unlock(region);
-            return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
-        }
+        link = &header->shard_free_list_heads[try_shard];
+        current_offset = *link;
 
-        payload_offset -= (size_t) current_offset.offset;
-        if (!allocator_align_up(payload_offset + size, alignof(max_align_t), &required_size)) {
-            shm_region_allocator_unlock(region);
-            return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
-        }
+        while (!offset_ptr_is_null(current_offset)) {
+            AllocatorBlockHeader *block;
+            unsigned char *block_bytes;
+            size_t prefix_base;
+            size_t payload_offset;
+            size_t required_size;
+            size_t remaining_size;
+            uint64_t shard_heap_offset;
+            uint64_t shard_heap_size;
 
-        if (required_size <= block->size) {
-            AllocationPrefix *prefix;
+            shard_heap_offset = allocator_shard_heap_offset(header->heap_offset, header->heap_size, try_shard);
+            shard_heap_size = allocator_shard_heap_size(header->heap_size);
 
-            remaining_size = (size_t) block->size - required_size;
-            if (remaining_size >= allocator_min_block_size()) {
-                AllocatorBlockHeader *next_block;
-                OffsetPtr next_block_offset;
+            if (current_offset.offset < shard_heap_offset ||
+                current_offset.offset >= shard_heap_offset + shard_heap_size) {
+                (void) pthread_mutex_unlock(shard_mutex);
+                return OFFSET_STORE_STATUS_INVALID_STATE;
+            }
 
-                next_block_offset.offset = current_offset.offset + required_size;
-                if (!allocator_block_from_offset(region, next_block_offset, &next_block)) {
-                    shm_region_allocator_unlock(region);
-                    return OFFSET_STORE_STATUS_INVALID_STATE;
+            if (!allocator_block_from_offset(region, current_offset, &block)) {
+                (void) pthread_mutex_unlock(shard_mutex);
+                return OFFSET_STORE_STATUS_INVALID_STATE;
+            }
+
+            block_bytes = (unsigned char *) block;
+            prefix_base = sizeof(AllocatorBlockHeader) + sizeof(AllocationPrefix);
+            if (!allocator_align_up(prefix_base + (size_t) current_offset.offset, alignment, &payload_offset)) {
+                (void) pthread_mutex_unlock(shard_mutex);
+                return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+            }
+
+            payload_offset -= (size_t) current_offset.offset;
+            if (!allocator_align_up(payload_offset + size, alignof(max_align_t), &required_size)) {
+                (void) pthread_mutex_unlock(shard_mutex);
+                return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
+            }
+
+            if (required_size <= block->size) {
+                AllocationPrefix *prefix;
+
+                remaining_size = (size_t) block->size - required_size;
+                if (remaining_size >= allocator_min_block_size()) {
+                    AllocatorBlockHeader *next_block;
+                    OffsetPtr next_block_offset;
+
+                    next_block_offset.offset = current_offset.offset + required_size;
+                    if (!allocator_block_from_offset(region, next_block_offset, &next_block)) {
+                        (void) pthread_mutex_unlock(shard_mutex);
+                        return OFFSET_STORE_STATUS_INVALID_STATE;
+                    }
+
+                    next_block->size = remaining_size;
+                    next_block->next_free = block->next_free;
+                    next_block->flags = OFFSET_STORE_ALLOCATOR_BLOCK_FREE;
+                    next_block->shard = try_shard;
+                    next_block->payload_offset = 0;
+                    *link = next_block_offset;
+                    block->size = required_size;
+                } else {
+                    *link = block->next_free;
                 }
 
-                next_block->size = remaining_size;
-                next_block->next_free = block->next_free;
-                next_block->flags = OFFSET_STORE_ALLOCATOR_BLOCK_FREE;
-                next_block->payload_offset = 0;
-                *link = next_block_offset;
-                block->size = required_size;
-            } else {
-                *link = block->next_free;
+                block->flags = 0;
+                block->next_free = offset_ptr_null();
+                block->shard = try_shard;
+                block->payload_offset = (uint32_t) payload_offset;
+
+                prefix = (AllocationPrefix *) (block_bytes + payload_offset - sizeof(AllocationPrefix));
+                prefix->block_offset = current_offset.offset;
+                *out_ptr = block_bytes + payload_offset;
+                (void) pthread_mutex_unlock(shard_mutex);
+                return OFFSET_STORE_STATUS_OK;
             }
 
-            block->flags = 0;
-            block->next_free = offset_ptr_null();
-            block->payload_offset = (uint32_t) payload_offset;
-
-            prefix = (AllocationPrefix *) (block_bytes + payload_offset - sizeof(AllocationPrefix));
-            prefix->block_offset = current_offset.offset;
-            *out_ptr = block_bytes + payload_offset;
-            if (shm_region_allocator_unlock(region) != OFFSET_STORE_STATUS_OK) {
-                return OFFSET_STORE_STATUS_SYSTEM_ERROR;
-            }
-            return OFFSET_STORE_STATUS_OK;
+            link = &block->next_free;
+            current_offset = block->next_free;
         }
 
-        link = &block->next_free;
-        current_offset = block->next_free;
+        (void) pthread_mutex_unlock(shard_mutex);
     }
 
-    header->allocation_failures += 1;
-    shm_region_allocator_unlock(region);
+    (void) atomic_fetch_add_explicit(&header->allocation_failures, 1, memory_order_relaxed);
     return OFFSET_STORE_STATUS_OUT_OF_MEMORY;
 }
 
@@ -763,46 +932,64 @@ OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr)
     OffsetPtr block_offset;
     AllocatorBlockHeader *block;
     unsigned char *expected_payload;
+    uint32_t shard;
+    int lock_result;
 
     if (region == NULL || ptr == NULL) {
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
-    if (shm_region_allocator_lock(region) != OFFSET_STORE_STATUS_OK) {
-        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
-    }
-
     header = allocator_header_mut(region);
-    if (!allocator_header_valid(region, header)) {
-        shm_region_allocator_unlock(region);
+    if (header == NULL || !allocator_header_valid(region, header)) {
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
     prefix = (AllocationPrefix *) ((unsigned char *) ptr - sizeof(AllocationPrefix));
     block_offset.offset = prefix->block_offset;
-    if (!allocator_block_is_in_heap(header, block_offset) ||
-        !allocator_block_from_offset(region, block_offset, &block)) {
-        shm_region_allocator_unlock(region);
+
+    if (!allocator_block_from_offset(region, block_offset, &block)) {
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
     if ((block->flags & OFFSET_STORE_ALLOCATOR_BLOCK_FREE) != 0) {
-        shm_region_allocator_unlock(region);
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    shard = block->shard;
+    if (shard >= OFFSET_STORE_ALLOCATOR_SHARD_COUNT) {
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    lock_result = pthread_mutex_lock(&header->shard_mutexes[shard]);
+#if defined(EOWNERDEAD)
+    if (lock_result == EOWNERDEAD) {
+        (void) pthread_mutex_consistent(&header->shard_mutexes[shard]);
+    }
+#endif
+    if (lock_result != 0) {
+        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
+    }
+
+    if (!allocator_header_valid(region, header)) {
+        (void) pthread_mutex_unlock(&header->shard_mutexes[shard]);
+        return OFFSET_STORE_STATUS_INVALID_STATE;
+    }
+
+    if (!allocator_block_from_offset(region, block_offset, &block)) {
+        (void) pthread_mutex_unlock(&header->shard_mutexes[shard]);
         return OFFSET_STORE_STATUS_INVALID_STATE;
     }
 
     expected_payload = (unsigned char *) block + block->payload_offset;
     if (expected_payload != (unsigned char *) ptr) {
-        shm_region_allocator_unlock(region);
+        (void) pthread_mutex_unlock(&header->shard_mutexes[shard]);
         return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
     }
 
     block->flags = OFFSET_STORE_ALLOCATOR_BLOCK_FREE;
     block->payload_offset = 0;
-    block->next_free = header->free_list_head;
-    header->free_list_head = block_offset;
-    if (shm_region_allocator_unlock(region) != OFFSET_STORE_STATUS_OK) {
-        return OFFSET_STORE_STATUS_SYSTEM_ERROR;
-    }
+    block->next_free = header->shard_free_list_heads[shard];
+    header->shard_free_list_heads[shard] = block_offset;
+    (void) pthread_mutex_unlock(&header->shard_mutexes[shard]);
     return OFFSET_STORE_STATUS_OK;
 }
