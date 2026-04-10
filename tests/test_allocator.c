@@ -10,6 +10,10 @@
 
 #include "unity.h"
 
+// Test hooks for deadlock detection tracking
+extern void test_set_held_shard(int32_t);
+extern int32_t test_get_held_shard(void);
+
 /**
  * @file test_allocator.c
  * @brief Unity tests for shared-memory allocator behavior and churn stress.
@@ -533,6 +537,37 @@ static void test_allocator_stats_reject_invalid_arguments(void)
 /**
  * @brief Verifies allocator integrity after multi-process allocation churn.
  */
+static void test_deadlock_detection_tracking(void)
+{
+    char name[64];
+    ShmRegion region;
+    void *allocation;
+
+    // Create region and init allocator
+    make_region_name(name, sizeof(name), "deadlock-detect");
+    TEST_ASSERT_TRUE(shm_region_unlink(name) != OFFSET_STORE_STATUS_OK);
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_create(&region, name, 4096));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_init(&region));
+
+    // Manually set held_shard to a valid shard index (e.g., 0)
+    test_set_held_shard(0);
+    // Ensure the setter worked
+    TEST_ASSERT_EQUAL_INT(0, test_get_held_shard());
+
+    // Perform an allocation that will likely select a different shard
+    // Size 1 forces a small allocation; shard selection is based on size hash.
+    // Even if it selects shard 0, the call will clear held_shard afterwards.
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_alloc(&region, 1, 16, &allocation));
+
+    // After allocation the allocator should have cleared the thread‑local tracking
+    TEST_ASSERT_EQUAL_INT(-1, test_get_held_shard());
+
+    // Clean up
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, allocator_free(&region, allocation));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_close(&region));
+    TEST_ASSERT_EQUAL_INT(OFFSET_STORE_STATUS_OK, shm_region_unlink(name));
+}
+
 static void test_allocator_churn_stress_multi_process(void)
 {
     enum {
@@ -619,6 +654,7 @@ int main(void)
     RUN_TEST(test_allocator_stats_track_free_and_used_bytes);
     RUN_TEST(test_allocator_failure_counters_track_out_of_memory);
     RUN_TEST(test_allocator_stats_reject_invalid_arguments);
+    RUN_TEST(test_deadlock_detection_tracking);
     RUN_TEST(test_allocator_churn_stress_multi_process);
     return UNITY_END();
 }

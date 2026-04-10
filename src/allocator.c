@@ -5,6 +5,28 @@
 #include <stdint.h>
 #include <stdalign.h>
 
+// Added includes for deadlock diagnostics
+#include <stdio.h>
+#include <unistd.h>
+
+// Thread‑local tracking of held shard lock for deadlock detection
+static __thread int32_t held_shard = -1;
+/* Test hook to set the thread‑local shard tracking variable */
+void test_set_held_shard(int32_t val) { held_shard = val; }
+/* Test hook to retrieve the current held_shard value */
+int32_t test_get_held_shard(void) { return held_shard; }
+
+
+// Simple diagnostic helper
+static void log_deadlock_warning(const char *action, int trying_shard, int current_shard) {
+    // Test hook function declared later can call this
+    pid_t pid = getpid();
+    unsigned long tid = (unsigned long) pthread_self();
+    fprintf(stderr, "[deadlock warning] pid=%d tid=%lu action=%s trying_shard=%d while_holding_shard=%d\n",
+            pid, tid, action, trying_shard, current_shard);
+}
+
+
 /**
  * @file allocator.c
  * @brief Shared-memory allocator implementation with sharded locking.
@@ -816,6 +838,12 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
 
         shard_mutex = &header->shard_mutexes[try_shard];
         lock_result = pthread_mutex_lock(shard_mutex);
+        // Deadlock detection: if this thread already holds a different shard lock, warn
+        if (held_shard != -1 && (uint32_t)held_shard != try_shard) {
+            log_deadlock_warning("allocator_alloc_lock", try_shard, held_shard);
+        }
+        // Record that we now hold this shard
+        held_shard = try_shard;
 #if defined(EOWNERDEAD)
         if (lock_result == EOWNERDEAD) {
             (void) pthread_mutex_consistent(shard_mutex);
@@ -827,6 +855,8 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
 
         if (!allocator_header_valid(region, header)) {
             (void) pthread_mutex_unlock(shard_mutex);
+                // Clear held shard tracking after unlocking
+                held_shard = -1;
             return OFFSET_STORE_STATUS_INVALID_STATE;
         }
 
@@ -849,11 +879,15 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
             if (current_offset.offset < shard_heap_offset ||
                 current_offset.offset >= shard_heap_offset + shard_heap_size) {
                 (void) pthread_mutex_unlock(shard_mutex);
+                // Clear held shard tracking after unlocking
+                held_shard = -1;
                 return OFFSET_STORE_STATUS_INVALID_STATE;
             }
 
             if (!allocator_block_from_offset(region, current_offset, &block)) {
                 (void) pthread_mutex_unlock(shard_mutex);
+                // Clear held shard tracking after unlocking
+                held_shard = -1;
                 return OFFSET_STORE_STATUS_INVALID_STATE;
             }
 
@@ -861,12 +895,16 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
             prefix_base = sizeof(AllocatorBlockHeader) + sizeof(AllocationPrefix);
             if (!allocator_align_up(prefix_base + (size_t) current_offset.offset, alignment, &payload_offset)) {
                 (void) pthread_mutex_unlock(shard_mutex);
+                // Clear held shard tracking after unlocking
+                held_shard = -1;
                 return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
             }
 
             payload_offset -= (size_t) current_offset.offset;
             if (!allocator_align_up(payload_offset + size, alignof(max_align_t), &required_size)) {
                 (void) pthread_mutex_unlock(shard_mutex);
+                // Clear held shard tracking after unlocking
+                held_shard = -1;
                 return OFFSET_STORE_STATUS_INVALID_ARGUMENT;
             }
 
@@ -881,6 +919,8 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
                     next_block_offset.offset = current_offset.offset + required_size;
                     if (!allocator_block_from_offset(region, next_block_offset, &next_block)) {
                         (void) pthread_mutex_unlock(shard_mutex);
+                // Clear held shard tracking after unlocking
+                held_shard = -1;
                         return OFFSET_STORE_STATUS_INVALID_STATE;
                     }
 
@@ -904,6 +944,8 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
                 prefix->block_offset = current_offset.offset;
                 *out_ptr = block_bytes + payload_offset;
                 (void) pthread_mutex_unlock(shard_mutex);
+                // Clear held shard tracking after unlocking
+                held_shard = -1;
                 return OFFSET_STORE_STATUS_OK;
             }
 
@@ -912,6 +954,8 @@ OffsetStoreStatus allocator_alloc(ShmRegion *region, size_t size, size_t alignme
         }
 
         (void) pthread_mutex_unlock(shard_mutex);
+                // Clear held shard tracking after unlocking
+                held_shard = -1;
     }
 
     (void) atomic_fetch_add_explicit(&header->allocation_failures, 1, memory_order_relaxed);
@@ -961,6 +1005,12 @@ OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr)
     }
 
     lock_result = pthread_mutex_lock(&header->shard_mutexes[shard]);
+        // Deadlock detection: if this thread already holds a different shard lock, warn
+        if (held_shard != -1 && (uint32_t)held_shard != shard) {
+            log_deadlock_warning("allocator_free_lock", shard, held_shard);
+        }
+        // Record that we now hold this shard
+        held_shard = shard;
 #if defined(EOWNERDEAD)
     if (lock_result == EOWNERDEAD) {
         (void) pthread_mutex_consistent(&header->shard_mutexes[shard]);
@@ -991,5 +1041,7 @@ OffsetStoreStatus allocator_free(ShmRegion *region, void *ptr)
     block->next_free = header->shard_free_list_heads[shard];
     header->shard_free_list_heads[shard] = block_offset;
     (void) pthread_mutex_unlock(&header->shard_mutexes[shard]);
+    // Clear held shard tracking after unlocking
+    held_shard = -1;
     return OFFSET_STORE_STATUS_OK;
 }

@@ -5,3 +5,4 @@ build/
 *.out
 TODO.md
 .vscode/
+opencode.json

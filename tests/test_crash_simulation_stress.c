@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 500
 
 #include <sys/types.h>
 
@@ -24,8 +25,12 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "unity.h"
+
+/* Provide prototype for usleep if missing */
+int usleep(useconds_t usec);
 
 /**
  * @brief Provides per-test setup for Unity.
