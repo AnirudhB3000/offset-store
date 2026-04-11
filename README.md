@@ -31,7 +31,7 @@ and exported entry points are sectioned consistently. The Unity test files now
 follow the same convention, grouping lifecycle hooks, shared helpers, worker
 helpers, test cases, and test runners with Doxygen sections.
 
-The allocator mutex is now configured as a robust process-shared mutex on
+The allocator mutex is configured as a robust process-shared mutex on
 platforms that support `pthread_mutexattr_setrobust(...)`. If a process dies
 while holding that mutex, the next allocator lock attempt returns
 `OFFSET_STORE_STATUS_INVALID_STATE` after marking the mutex consistent and
@@ -39,11 +39,17 @@ releasing it so callers can validate or repair shared state before retrying.
 The roots and index rwlocks remain non-robust because portable POSIX rwlock
 owner-death recovery is not available.
 
-The private shared region header now also carries stable metadata beyond just
-magic and version: a region state-flags field, a generation counter, and a
-checksum over the stable header bytes plus the inline root/index tables. Attach
-and validation paths reject regions that are not fully ready or whose stable
-metadata has been corrupted.
+The private shared region header also carries stable metadata: a region 
+state-flags field, a generation counter, and a checksum over the stable header 
+bytes plus the inline root/index tables. Attach and validation paths reject 
+regions that are not fully ready or whose stable metadata has been corrupted.
+
+The allocator uses sharded locking: the heap is partitioned into N shards
+(currently 4), each with its own process-shared mutex and free list. This reduces
+contention under high-load multi-process scenarios by allowing concurrent allocations
+from different shards. Shard selection uses size-based routing to improve locality.
+Allocation failures are tracked atomically in shared metadata using `_Atomic`
+operations with `memory_order_relaxed` for lock-free performance.
 
 The polished getter/accessor APIs now also have explicit regression coverage in
 the unit tests so naming and contract behavior stay stable during future cleanup.
@@ -245,11 +251,20 @@ Current implemented allocator behavior:
 - the heap begins after the allocator header, aligned to `max_align_t`
 - free space is tracked as a first-fit singly linked free list using `OffsetPtr`
 - each block begins with a stable shared-memory block header
+- the allocator uses sharded locking: the heap is partitioned into N shards
+  (currently 4), each with its own process-shared mutex and free list
+- shard selection uses size-based routing to improve locality for similar-sized
+  allocations
+- allocation requests fall back through shards if the preferred shard has no
+  suitable block
+- each shard tracks its own free list independently
+- allocation failures increment a persistent `_Atomic` counter in shared metadata
+  using lock-free `memory_order_relaxed` atomics
 - allocation supports caller-specified power-of-two alignment
 - freeing reconstructs the owning block from an in-band prefix that stores the
   block offset rather than a raw pointer
-- `allocator_validate` walks the physical heap and the free list to catch basic
-  structural corruption
+- `allocator_validate` walks the physical heap and each shard's free list to
+  catch basic structural corruption
 - allocator metadata layout remains internal to `src/allocator.c`; the public API
   now exposes small query helpers instead of the raw allocator header struct
 - `allocator_get_stats(...)` provides a snapshot of heap usage and free-space
@@ -261,21 +276,26 @@ Allocator algorithm:
 
 1. `allocator_init(...)` computes where the allocator header ends, rounds the
    heap start up to `max_align_t`, and creates one initial free block covering
-   the remaining bytes.
-2. `allocator_alloc(...)` walks the free list in first-fit order.
-3. For each candidate block, it computes where a payload could start after the
+   the remaining bytes for each shard. The heap is divided evenly among shards.
+2. `allocator_alloc(...)` selects a preferred shard based on allocation size
+   using a hash-based distribution, then walks that shard's free list in first-fit order.
+3. If the preferred shard cannot satisfy the request, the allocator falls back
+   to trying other shards in round-robin fashion.
+4. For each candidate block, it computes where a payload could start after the
    block header and allocation prefix, then rounds that payload start up to the
    caller's requested alignment.
-4. If the block is large enough, the allocator either consumes the whole block
-   or splits it into an allocated block plus a remainder free block.
-5. Immediately before the returned payload, the allocator writes a small prefix
+5. If the block is large enough, the allocator either consumes the whole block
+   or splits it into an allocated block plus a remainder free block that remains
+   in the same shard.
+6. Immediately before the returned payload, the allocator writes a small prefix
    containing the owning block offset.
-6. `allocator_free(...)` reads that prefix back, reconstructs the block, checks
-   that it still looks like a live allocation, and pushes it onto the free list.
+7. `allocator_free(...)` reads that prefix back, reconstructs the block, checks
+   that it still looks like a live allocation, and pushes it onto the free list
+   for the block's shard.
 
-This is intentionally a simple first-fit allocator. It does not currently
-coalesce adjacent free blocks, so fragmentation is possible after mixed-size
-allocation patterns.
+This is intentionally a simple first-fit allocator with sharded free lists.
+It does not currently coalesce adjacent free blocks, so fragmentation is possible
+after mixed-size allocation patterns.
 
 ## Object Layout
 
@@ -334,6 +354,50 @@ Object-store algorithm:
 
 The important detail is that the object store does not own a second heap or
 registry. It is a disciplined layer on top of the shared allocator.
+
+## Shared-Memory Containers
+
+The library now provides two offset-based container types for storing collections
+in shared memory:
+
+### Dynamic Array (vector)
+
+`dynarray` provides a resizable array stored entirely in shared memory. It is
+implemented as a generic object with a header containing capacity, length,
+element size, data offset, and a process-shared mutex for thread-safety. The
+data payload is stored in a separate allocator allocation.
+
+Current implementation:
+
+- `dynarray_create(...)` allocates a new array with an initial capacity
+- `dynarray_push(...)` appends an element, growing capacity if needed
+- `dynarray_get(...)` retrieves an element by index
+- `dynarray_reserve(...)` explicitly grows capacity
+- `dynarray_length(...)` returns the current element count
+- `dynarray_destroy(...)` frees the array and its payload
+
+The array uses a simple doubling strategy for growth: when capacity is reached,
+a new buffer twice the size is allocated, existing data is copied, and the old
+buffer is freed.
+
+### Linked List (intrusive)
+
+`dynlist` provides a doubly-linked list with intrusive nodes. Each node stores
+the user payload directly after the node header, avoiding separate allocations
+per element. The list header tracks head/tail offsets, length, element size,
+and a process-shared mutex.
+
+Current implementation:
+
+- `dynlist_create(...)` allocates a new empty list
+- `dynlist_push_back(...)` appends an element at the tail
+- `dynlist_push_front(...)` inserts an element at the head
+- `dynlist_get(...)` retrieves an element by index (linear traversal)
+- `dynlist_length(...)` returns the current element count
+- `dynlist_destroy(...)` frees all nodes and the list header
+
+Both containers use robust process-shared mutexes to handle process crashes
+gracefully.
 
 Current implemented root-discovery behavior:
 

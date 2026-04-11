@@ -11,9 +11,11 @@ store.
 - `offset_store.c`: library-wide public status strings
 - `shm_region.c`: POSIX shared-memory lifecycle and the shared region header
 - `offset_ptr.c`: offset conversion and bounds-checked resolution helpers
-- `allocator.c`: in-region free-list allocator
+- `allocator.c`: in-region sharded free-list allocator
 - `object_store.c`: fixed-header objects built on allocator allocations
 - `store.c`: convenience wrapper for bootstrap/open/close flows
+- `dynarray.c`: offset-based dynamic array (vector) container
+- `dynlist.c`: offset-based intrusive linked list container
 
 ## `shm_region.c`
 
@@ -362,3 +364,68 @@ The current implementation is intentionally conservative:
 
 Those tradeoffs keep the layout deterministic and the code inspectable, which is
 consistent with the repository's stated learning and experimentation goals.
+
+## `dynarray.c`
+
+`dynarray.c` implements an offset-based dynamic array (vector) stored in shared
+memory. The array is allocated as a generic object via `object_store_alloc(...)`,
+with the header containing metadata and a data payload stored in a separate
+allocator allocation.
+
+The header structure:
+
+```c
+typedef struct {
+    uint64_t    capacity;       /**< Number of elements the payload buffer can hold */
+    uint64_t    length;         /**< Current number of valid elements */
+    size_t      elem_size;      /**< Size of a single element in bytes */
+    OffsetPtr   data_offset;    /**< Offset of the contiguous payload buffer */
+    pthread_mutex_t lock;       /**< Robust, process-shared mutex protecting the array */
+} DynArrayHeader;
+```
+
+Key implementation details:
+
+- The array uses a doubling growth strategy: when capacity is reached, a new
+  buffer twice the size is allocated, existing data is copied, and the old
+  buffer is freed
+- The mutex is robust and process-shared, allowing crash recovery
+- All operations that mutate the array (push, reserve, destroy) acquire the lock
+- The array stores elements as raw bytes - callers must handle any typed
+  serialization/deserialization
+
+## `dynlist.c`
+
+`dynlist.c` implements an offset-based doubly-linked list with intrusive nodes.
+Each node stores the user payload directly after the node header, avoiding
+separate allocations for each element.
+
+The node header structure:
+
+```c
+typedef struct {
+    OffsetPtr next;   /**< Offset of the next node (or null). */
+    OffsetPtr prev;   /**< Offset of the previous node (or null). */
+} DynListNodeHeader;
+```
+
+The list header structure:
+
+```c
+typedef struct {
+    uint64_t    length;      /**< Number of elements in the list. */
+    size_t      elem_size;   /**< Size of each element in bytes. */
+    OffsetPtr   head;        /**< Offset of the first node. */
+    OffsetPtr   tail;        /**< Offset of the last node. */
+    pthread_mutex_t lock;    /**< Robust, process-shared mutex protecting the list. */
+} DynListHeader;
+```
+
+Key implementation details:
+
+- Nodes are allocated from the shared allocator on push operations
+- The list maintains both head and tail pointers for O(1) append
+- `dynlist_get(...)` performs linear traversal from the head - suitable for
+  small lists; callers needing random access should consider dynarray instead
+- The mutex is robust and process-shared for crash recovery
+- Destroy frees all nodes by following the next pointers from head to tail

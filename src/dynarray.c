@@ -18,7 +18,20 @@
 #include <errno.h>
 #include <stdbool.h>
 
-/* Internal helper: resolve the header from an OffsetPtr */
+/**
+ * @brief Resolve the array header from an {@link OffsetPtr}.
+ *
+ * This internal helper converts the offset that identifies the array header
+ * into a pointer to the {@link DynArrayHeader} structure stored in the shared
+ * memory region. It verifies that the offset is valid and that the resolved
+ * span covers the full size of the header.
+ *
+ * @param[in]  region   The shared‑memory region descriptor.
+ * @param[in]  arr_offset  Offset pointing to the array header.
+ * @param[out] out_hdr  Pointer to where the resolved header pointer will be stored.
+ * @return true  if the header was successfully resolved.
+ * @return false otherwise (invalid offset, out‑of‑bounds, etc.).
+ */
 static bool dynarray_resolve_header(ShmRegion *region, OffsetPtr arr_offset,
                                     DynArrayHeader **out_hdr) {
     void *raw = NULL;
@@ -31,6 +44,16 @@ static bool dynarray_resolve_header(ShmRegion *region, OffsetPtr arr_offset,
 }
 
 /* Internal helper: lock/unlock with robust recovery */
+/**
+ * @brief Acquire the internal mutex of a dynamic array.
+ *
+ * The array uses a robust, process‑shared {@link pthread_mutex_t}. If the
+ * previous owner of the mutex died while holding it, the lock operation returns
+ * {@code EOWNERDEAD}. In that case we mark the mutex state as consistent so that
+ * subsequent operations can continue safely.
+ *
+ * @param[in] hdr Pointer to the array header whose mutex should be locked.
+ */
 static void dynarray_lock(DynArrayHeader *hdr) {
     int rc = pthread_mutex_lock(&hdr->lock);
     if (rc == EOWNERDEAD) {
@@ -40,10 +63,29 @@ static void dynarray_lock(DynArrayHeader *hdr) {
 #endif
     }
 }
+
+/**
+ * @brief Release the internal mutex of a dynamic array.
+ *
+ * @param[in] hdr Pointer to the array header whose mutex should be unlocked.
+ */
 static void dynarray_unlock(DynArrayHeader *hdr) {
     pthread_mutex_unlock(&hdr->lock);
 }
 
+/**
+ * @brief Create a new dynamic array object in shared memory.
+ *
+ * This function allocates a {@link DynArrayHeader} via the generic object store,
+ * initializes its fields (capacity, length, element size, and a null payload
+ * offset), and sets up a robust process‑shared mutex for internal thread safety.
+ * The returned {@link OffsetPtr} points to the array header; a null offset is
+ * returned on failure (e.g., allocation error or invalid element size).
+ *
+ * @param[in] region    The shared‑memory region to allocate the array in.
+ * @param[in] elem_size Size of each array element in bytes (must be non‑zero).
+ * @return OffsetPtr to the new array header, or a null offset on error.
+ */
 OffsetPtr dynarray_create(ShmRegion *region, size_t elem_size) {
     if (elem_size == 0) return offset_ptr_null();
     OffsetPtr hdr_ptr;

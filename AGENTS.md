@@ -127,11 +127,21 @@ Initial mechanism:
 pthread_mutex (process-shared)
 ```
 
+Current implementation features:
+
+* Sharded allocator locks: heap partitioned into N shards (currently 4), each with
+  its own process-shared mutex and free list, reducing contention under high-load
+* Robust mutex attributes (PTHREAD_MUTEX_ROBUST) for crash resilience on all internal
+  mutexes (allocator shards, dynarray, dynlist)
+* Lock recovery handling for EOWNERDEAD returns after process crash
+* Atomic operations for simple counters (allocation_failures) using _Atomic with
+  memory_order_relaxed
+
 Possible upgrades:
 
 * lock-free structures
 * atomic operations
-* sharded allocators
+* finer-grained per-object locking
 
 ---
 
@@ -158,6 +168,30 @@ Example memory layout:
 
 ---
 
+# Shared-Memory Containers
+
+The library provides offset-based container types for storing collections in shared memory.
+
+## Dynamic Array (vector)
+
+`dynarray` provides a resizable array stored entirely in shared memory. The header contains capacity, length, element size, data offset, and a process-shared mutex.
+
+Features:
+- Doubling growth strategy for amortized O(1) append
+- Robust process-shared mutex for crash resilience
+- Data stored in separate allocator allocation
+
+## Linked List (intrusive)
+
+`dynlist` provides a doubly-linked list with intrusive nodes. Each node stores the user payload directly after the node header.
+
+Features:
+- Head and tail pointers for O(1) append at either end
+- Node payload stored inline after node header
+- Robust process-shared mutex for crash resilience
+
+---
+
 # Repository Structure
 
 ```
@@ -166,18 +200,25 @@ Example memory layout:
     allocator.c
     offset_ptr.c
     object_store.c
+    store.c
+    dynarray.c
+    dynlist.c
 
-/include
+/include/offset_store
     shm_region.h
     allocator.h
     offset_ptr.h
+    object_store.h
+    store.h
+    dynarray.h
+    dynlist.h
 
 /examples
     producer.c
     consumer.c
 
 /tests
-    allocator_tests.c
+    test_*.c (multiple test files)
 ```
 
 ---
