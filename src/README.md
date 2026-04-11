@@ -6,18 +6,28 @@ the public model and project goals. This document explains how the current
 implementation works module by module, with emphasis on the allocator and object
 store.
 
-## Module Map
+## Directory Structure
 
-- `offset_store.c`: library-wide public status strings
-- `shm_region.c`: POSIX shared-memory lifecycle and the shared region header
-- `offset_ptr.c`: offset conversion and bounds-checked resolution helpers
-- `allocator.c`: in-region sharded free-list allocator
-- `object_store.c`: fixed-header objects built on allocator allocations
-- `store.c`: convenience wrapper for bootstrap/open/close flows
-- `dynarray.c`: offset-based dynamic array (vector) container
-- `dynlist.c`: offset-based intrusive linked list container
+```
+src/
+├── core/           # Core infrastructure
+│   ├── allocator.c    # In-region sharded free-list allocator
+│   ├── offset_ptr.c  # Offset conversion and bounds-checked resolution
+│   ├── offset_store.c # Library-wide public status strings
+│   └── shm_region.c   # POSIX shared-memory lifecycle and region header
+│
+├── store/          # High-level store API
+│   ├── object_store.c # Fixed-header objects built on allocator
+│   └── store.c        # Convenience wrapper for bootstrap/open/close
+│
+└── containers/      # Shared-memory container types
+    ├── dynarray.c    # Offset-based dynamic array (vector)
+    ├── dynlist.c     # Offset-based intrusive linked list
+    ├── hashtable.c   # Offset-based hash table with chaining
+    └── ringbuf.c     # Offset-based ring buffer (bounded queue)
+```
 
-## `shm_region.c`
+## `core/shm_region.c`
 
 `shm_region.c` owns the outer shared-memory container. Its job is to create or
 open a POSIX shared-memory object, map it into the current process, and manage a
@@ -82,7 +92,7 @@ Important points:
 This module deliberately keeps the shared header typedef private so callers
 cannot accidentally depend on its binary layout in public code.
 
-## `offset_ptr.c`
+## `core/offset_ptr.c`
 
 `offset_ptr.c` centralizes the rule that shared references are offsets from the
 region base, never raw pointers.
@@ -98,7 +108,7 @@ The rules enforced here are simple but foundational:
 Every higher-level module depends on these helpers to convert between
 process-local pointers and address-independent shared references.
 
-## `allocator.c`
+## `core/allocator.c`
 
 `allocator.c` is the shared heap manager. All allocator metadata lives inside the
 shared mapping immediately after the region header. Nothing in the allocator
@@ -241,7 +251,7 @@ The same rule extends to object-store accessors. Functions such as
 `object_store_get_payload_const(...)`, and `object_store_get_payload(...)`
 perform validation but do not acquire the allocator mutex themselves.
 
-## `object_store.c`
+## `store/object_store.c`
 
 `object_store.c` layers a stable object format on top of allocator allocations.
 An object is just one allocator allocation whose first bytes contain a fixed
@@ -324,7 +334,7 @@ That means the current consistency model is simple but limited:
   resolved process-local pointer if the caller does not hold external
   synchronization
 
-## `store.c`
+## `store/store.c`
 
 `store.c` provides the ergonomic wrapper around the lower-level modules:
 
@@ -352,20 +362,7 @@ Current store-level flows remain single-subsystem:
 For recommended caller-side sequencing and error-handling patterns, see the
 `API Usage` section in [`README.md`](/home/aniru/offset-store/README.md).
 
-## Current Limits
-
-The current implementation is intentionally conservative:
-
-- one allocator mutex plus rwlocks for the roots and index subsystems
-- first-fit allocation
-- no free-block coalescing
-- no crash recovery journal
-- no robust handling for the allocator mutex or the roots/index rwlocks after process death
-
-Those tradeoffs keep the layout deterministic and the code inspectable, which is
-consistent with the repository's stated learning and experimentation goals.
-
-## `dynarray.c`
+## `containers/dynarray.c`
 
 `dynarray.c` implements an offset-based dynamic array (vector) stored in shared
 memory. The array is allocated as a generic object via `object_store_alloc(...)`,
@@ -394,7 +391,7 @@ Key implementation details:
 - The array stores elements as raw bytes - callers must handle any typed
   serialization/deserialization
 
-## `dynlist.c`
+## `containers/dynlist.c`
 
 `dynlist.c` implements an offset-based doubly-linked list with intrusive nodes.
 Each node stores the user payload directly after the node header, avoiding
@@ -429,3 +426,88 @@ Key implementation details:
   small lists; callers needing random access should consider dynarray instead
 - The mutex is robust and process-shared for crash recovery
 - Destroy frees all nodes by following the next pointers from head to tail
+
+## `containers/hashtable.c`
+
+`hashtable.c` implements an offset-based hash table stored in shared memory
+using chaining for collision resolution.
+
+The header structure:
+
+```c
+typedef struct {
+    uint64_t    num_buckets;  /**< Number of hash buckets. */
+    size_t      key_size;     /**< Maximum key string length (excluding null). */
+    size_t      val_size;     /**< Size of each value in bytes. */
+    OffsetPtr   buckets;     /**< Offset of the bucket array. */
+    pthread_mutex_t lock;    /**< Robust, process-shared mutex protecting the table. */
+} HashTableHeader;
+```
+
+Memory layout:
+```
++------------------+
+| HashTableHeader |  (num_buckets, key_size, val_size, buckets offset, mutex)
++------------------+
+| bucket array     |  (num_buckets * sizeof(OffsetPtr))
++------------------+
+| entries          |  (one allocation per key-value pair)
++------------------+
+| key strings      |  (length + data + null, per entry)
++------------------+
+| value buffers    |  (val_size bytes, per entry)
++------------------+
+```
+
+Key implementation details:
+
+- Uses djb2 hash algorithm (h = h * 33 + c)
+- Keys are stored as length-prefixed null-terminated strings
+- Values are stored as raw bytes
+- Entries use chaining for collision resolution
+- All operations are protected by a robust process-shared mutex
+
+## `containers/ringbuf.c`
+
+`ringbuf.c` implements an offset-based ring buffer (bounded queue) stored in
+shared memory.
+
+The header structure:
+
+```c
+typedef struct {
+    uint64_t    capacity;       /**< Maximum number of elements. */
+    uint64_t    head;            /**< Index of the next element to dequeue. */
+    uint64_t    tail;            /**< Index of the next slot to fill. */
+    size_t      elem_size;       /**< Size of each element in bytes. */
+    OffsetPtr   data_offset;     /**< Offset of the element buffer. */
+    pthread_mutex_t lock;        /**< Robust, process-shared mutex. */
+} RingBufHeader;
+```
+
+Indexing:
+- `head` points to the next element to dequeue
+- `tail` points to the next slot to fill
+- Empty when: `head == tail`
+- Full when: `(tail + 1) % capacity == head`
+- One slot is always kept unused to distinguish full from empty
+
+Key implementation details:
+
+- Fixed-capacity bounded queue with FIFO semantics
+- Uses modulo arithmetic for circular indexing
+- Thread-safe push/pop operations via robust mutex
+- Ideal for producer-consumer scenarios
+
+## Current Limits
+
+The current implementation is intentionally conservative:
+
+- one allocator mutex plus rwlocks for the roots and index subsystems
+- first-fit allocation
+- no free-block coalescing
+- no crash recovery journal
+- no robust handling for the allocator mutex or the roots/index rwlocks after process death
+
+Those tradeoffs keep the layout deterministic and the code inspectable, which is
+consistent with the repository's stated learning and experimentation goals.

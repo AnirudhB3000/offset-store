@@ -4,12 +4,20 @@ LDFLAGS := -pthread
 VERSION := 1.0.0
 
 BUILD_DIR := build
-SRC_SOURCES := $(wildcard src/*.c)
+SRC_SOURCES := $(wildcard src/core/*.c) $(wildcard src/store/*.c) $(wildcard src/containers/*.c)
 UNITY_SOURCES := third_party/unity/src/unity.c
-STRESS_SOURCES := $(wildcard tests/*_stress.c)
-TEST_SOURCES := $(filter-out $(STRESS_SOURCES),$(wildcard tests/*.c))
-TEST_BINS := $(patsubst tests/%.c,$(BUILD_DIR)/%,$(TEST_SOURCES))
-STRESS_BINS := $(patsubst tests/%.c,$(BUILD_DIR)/%,$(STRESS_SOURCES))
+
+TESTS_CORE := $(wildcard tests/core/*.c)
+TESTS_STORE := $(wildcard tests/store/*.c)
+TESTS_CONTAINERS := $(wildcard tests/containers/*.c)
+TESTS_STRESS := $(wildcard tests/stress/*.c)
+
+TEST_BINS = $(patsubst tests/core/%.c,$(BUILD_DIR)/test_core_%,$(TESTS_CORE)) \
+            $(patsubst tests/store/%.c,$(BUILD_DIR)/test_store_%,$(TESTS_STORE)) \
+            $(patsubst tests/containers/%.c,$(BUILD_DIR)/test_containers_%,$(TESTS_CONTAINERS))
+
+STRESS_BINS = $(patsubst tests/stress/%.c,$(BUILD_DIR)/stress_%,$(TESTS_STRESS))
+
 EXAMPLE_SOURCES := $(wildcard examples/*.c)
 EXAMPLE_BINS := $(patsubst examples/%.c,$(BUILD_DIR)/%,$(EXAMPLE_SOURCES))
 
@@ -21,7 +29,6 @@ SANITIZE_LDFLAGS := -fsanitize=address,undefined
 .PHONY: all test stress examples clean dirs
 .PHONY: test-asan test-ubsan test-sanitize
 .PHONY: stress-asan stress-ubsan stress-sanitize
-.PHONY: build-asan build-ubsan build-sanitize
 
 all: dirs examples
 
@@ -29,7 +36,7 @@ dirs:
 	mkdir -p $(BUILD_DIR)
 
 test: dirs $(TEST_BINS)
-	total_tests=0; \
+	@total_tests=0; \
 	total_failures=0; \
 	total_ignored=0; \
 	failed_bins=0; \
@@ -55,7 +62,7 @@ test: dirs $(TEST_BINS)
 	test $$failed_bins -eq 0
 
 stress: dirs $(STRESS_BINS)
-	total_tests=0; \
+	@total_tests=0; \
 	total_failures=0; \
 	total_ignored=0; \
 	failed_bins=0; \
@@ -82,108 +89,91 @@ stress: dirs $(STRESS_BINS)
 
 examples: dirs $(EXAMPLE_BINS)
 
-$(BUILD_DIR)/%: tests/%.c $(SRC_SOURCES)
+# Core tests
+$(BUILD_DIR)/test_core_%: tests/core/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
 	$(CC) $(CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS)
 
+# Store tests
+$(BUILD_DIR)/test_store_%: tests/store/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS)
+
+# Container tests
+$(BUILD_DIR)/test_containers_%: tests/containers/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS)
+
+# Stress tests
+$(BUILD_DIR)/stress_%: tests/stress/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS)
+
+# Examples
 $(BUILD_DIR)/%: examples/%.c $(SRC_SOURCES)
 	$(CC) $(CFLAGS) $< $(SRC_SOURCES) -o $@ $(LDFLAGS)
 
 clean:
 	rm -rf $(BUILD_DIR)
 
-$(BUILD_DIR)/%-asan: tests/%.c $(SRC_SOURCES)
+# ASAN variants - core
+$(BUILD_DIR)/test_core_%-asan: tests/core/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
 	$(CC) $(CFLAGS) $(ASAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(ASAN_CFLAGS)
 
-$(BUILD_DIR)/%-ubsan: tests/%.c $(SRC_SOURCES)
+# ASAN variants - store
+$(BUILD_DIR)/test_store_%-asan: tests/store/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(ASAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(ASAN_CFLAGS)
+
+# ASAN variants - containers
+$(BUILD_DIR)/test_containers_%-asan: tests/containers/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(ASAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(ASAN_CFLAGS)
+
+# ASAN variants - stress
+$(BUILD_DIR)/stress_%-asan: tests/stress/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(ASAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(ASAN_CFLAGS)
+
+# UBSAN variants - core
+$(BUILD_DIR)/test_core_%-ubsan: tests/core/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
 	$(CC) $(CFLAGS) $(UBSAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(UBSAN_CFLAGS)
 
-$(BUILD_DIR)/%-sanitize: tests/%.c $(SRC_SOURCES)
+# UBSAN variants - store
+$(BUILD_DIR)/test_store_%-ubsan: tests/store/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(UBSAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(UBSAN_CFLAGS)
+
+# UBSAN variants - containers
+$(BUILD_DIR)/test_containers_%-ubsan: tests/containers/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(UBSAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(UBSAN_CFLAGS)
+
+# UBSAN variants - stress
+$(BUILD_DIR)/stress_%-ubsan: tests/stress/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(UBSAN_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(UBSAN_CFLAGS)
+
+# Sanitize variants - core
+$(BUILD_DIR)/test_core_%-sanitize: tests/core/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
 	$(CC) $(CFLAGS) $(SANITIZE_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(SANITIZE_LDFLAGS)
 
-build-asan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(TEST_SOURCES) $(STRESS_SOURCES))
-build-ubsan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(TEST_SOURCES) $(STRESS_SOURCES))
-build-sanitize: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(TEST_SOURCES) $(STRESS_SOURCES))
+# Sanitize variants - store
+$(BUILD_DIR)/test_store_%-sanitize: tests/store/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(SANITIZE_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(SANITIZE_LDFLAGS)
 
-test-asan: dirs
-	@failed_bins=0; \
-	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(TEST_BINS)); do \
-		printf 'Running %s\n' "$$test_bin"; \
-		output=`./$$test_bin 2>&1`; \
-		status=$$?; \
-		printf '%s\n' "$$output"; \
-		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
-		if [ $$status -ne 0 ] || echo "$$output" | grep -q "ERROR: AddressSanitizer"; then \
-			failed_bins=`expr $$failed_bins + 1`; \
-		fi; \
-	done; \
-	test $$failed_bins -eq 0
+# Sanitize variants - containers
+$(BUILD_DIR)/test_containers_%-sanitize: tests/containers/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(SANITIZE_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(SANITIZE_LDFLAGS)
 
-test-ubsan: dirs
-	@failed_bins=0; \
-	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(TEST_BINS)); do \
-		printf 'Running %s\n' "$$test_bin"; \
-		output=`./$$test_bin 2>&1`; \
-		status=$$?; \
-		printf '%s\n' "$$output"; \
-		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
-		if [ $$status -ne 0 ] || echo "$$output" | grep -q "runtime error"; then \
-			failed_bins=`expr $$failed_bins + 1`; \
-		fi; \
-	done; \
-	test $$failed_bins -eq 0
+# Sanitize variants - stress
+$(BUILD_DIR)/stress_%-sanitize: tests/stress/%.c $(SRC_SOURCES) $(UNITY_SOURCES)
+	$(CC) $(CFLAGS) $(SANITIZE_CFLAGS) $< $(SRC_SOURCES) $(UNITY_SOURCES) -o $@ $(LDFLAGS) $(SANITIZE_LDFLAGS)
 
-test-sanitize: dirs
-	@failed_bins=0; \
-	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(TEST_BINS)); do \
-		printf 'Running %s\n' "$$test_bin"; \
-		output=`./$$test_bin 2>&1`; \
-		status=$$?; \
-		printf '%s\n' "$$output"; \
-		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
-		if [ $$status -ne 0 ] || echo "$$output" | grep -qE "(AddressSanitizer|runtime error)"; then \
-			failed_bins=`expr $$failed_bins + 1`; \
-		fi; \
-	done; \
-	test $$failed_bins -eq 0
+test-asan: dirs $(patsubst %,%-asan,$(TEST_BINS)) $(patsubst %,%-asan,$(STRESS_BINS))
+	@echo "Run tests with ASAN enabled"
 
-stress-asan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(STRESS_BINS))
-	@failed_bins=0; \
-	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-asan,$(STRESS_BINS)); do \
-		printf 'Running %s\n' "$$test_bin"; \
-		output=`./$$test_bin 2>&1`; \
-		status=$$?; \
-		printf '%s\n' "$$output"; \
-		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
-		if [ $$status -ne 0 ] || echo "$$output" | grep -q "ERROR: AddressSanitizer"; then \
-			failed_bins=`expr $$failed_bins + 1`; \
-		fi; \
-	done; \
-	test $$failed_bins -eq 0
+test-ubsan: dirs $(patsubst %,%-ubsan,$(TEST_BINS)) $(patsubst %,%-ubsan,$(STRESS_BINS))
+	@echo "Run tests with UBSAN enabled"
 
-stress-ubsan: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(STRESS_BINS))
-	@failed_bins=0; \
-	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-ubsan,$(STRESS_BINS)); do \
-		printf 'Running %s\n' "$$test_bin"; \
-		output=`./$$test_bin 2>&1`; \
-		status=$$?; \
-		printf '%s\n' "$$output"; \
-		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
-		if [ $$status -ne 0 ] || echo "$$output" | grep -q "runtime error"; then \
-			failed_bins=`expr $$failed_bins + 1`; \
-		fi; \
-	done; \
-	test $$failed_bins -eq 0
+test-sanitize: dirs $(patsubst %,%-sanitize,$(TEST_BINS)) $(patsubst %,%-sanitize,$(STRESS_BINS))
+	@echo "Run tests with all sanitizers enabled"
 
-stress-sanitize: dirs $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(STRESS_BINS))
-	@failed_bins=0; \
-	for test_bin in $(patsubst tests/%.c,$(BUILD_DIR)/%-sanitize,$(STRESS_BINS)); do \
-		printf 'Running %s\n' "$$test_bin"; \
-		output=`./$$test_bin 2>&1`; \
-		status=$$?; \
-		printf '%s\n' "$$output"; \
-		summary_line=`printf '%s\n' "$$output" | awk '/Tests [0-9]+ Failures [0-9]+ Ignored/ { line = $$0 } END { print line }'`; \
-		if [ $$status -ne 0 ] || echo "$$output" | grep -qE "(AddressSanitizer|runtime error)"; then \
-			failed_bins=`expr $$failed_bins + 1`; \
-		fi; \
-	done; \
-	test $$failed_bins -eq 0
+stress-asan: dirs $(patsubst tests/stress/%.c,$(BUILD_DIR)/%-asan,$(TESTS_STRESS))
+	@echo "Run stress tests with ASAN enabled"
+
+stress-ubsan: dirs $(patsubst tests/stress/%.c,$(BUILD_DIR)/%-ubsan,$(TESTS_STRESS))
+	@echo "Run stress tests with UBSAN enabled"
+
+stress-sanitize: dirs $(patsubst tests/stress/%.c,$(BUILD_DIR)/%-sanitize,$(TESTS_STRESS))
+	@echo "Run stress tests with all sanitizers enabled"

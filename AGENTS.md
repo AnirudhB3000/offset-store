@@ -132,7 +132,7 @@ Current implementation features:
 * Sharded allocator locks: heap partitioned into N shards (currently 4), each with
   its own process-shared mutex and free list, reducing contention under high-load
 * Robust mutex attributes (PTHREAD_MUTEX_ROBUST) for crash resilience on all internal
-  mutexes (allocator shards, dynarray, dynlist)
+  mutexes (allocator shards, dynarray, dynlist, hashtable, ringbuf)
 * Lock recovery handling for EOWNERDEAD returns after process crash
 * Atomic operations for simple counters (allocation_failures) using _Atomic with
   memory_order_relaxed
@@ -196,29 +196,52 @@ Features:
 
 ```
 /src
-    shm_region.c
-    allocator.c
-    offset_ptr.c
-    object_store.c
-    store.c
-    dynarray.c
-    dynlist.c
+    /core
+        allocator.c      # Sharded free-list allocator
+        offset_ptr.c    # Offset conversion helpers
+        offset_store.c  # Status code strings
+        shm_region.c    # Shared memory region management
+    /store
+        object_store.c  # Object allocation layer
+        store.c         # High-level store API
+    /containers
+        dynarray.c      # Dynamic array (vector)
+        dynlist.c       # Intrusive linked list
+        hashtable.c     # Hash table with chaining
+        ringbuf.c       # Ring buffer (bounded queue)
 
 /include/offset_store
-    shm_region.h
     allocator.h
     offset_ptr.h
+    offset_store.h
+    shm_region.h
     object_store.h
     store.h
     dynarray.h
     dynlist.h
-
-/examples
-    producer.c
-    consumer.c
+    hashtable.h
+    ringbuf.h
 
 /tests
-    test_*.c (multiple test files)
+    /core
+        test_allocator.c
+        test_offset_ptr.c
+        test_offset_store.c
+        test_shm_region.c
+        test_corruption_handling.c
+    /store
+        test_object_store.c
+        test_store.c
+    /containers
+        test_dynarray.c
+    /stress
+        test_crash_simulation_stress.c
+        test_lock_contention_stress.c
+        test_store_stress.c
+
+/examples
+    producer.c          # Creates all container types
+    consumer.c         # Reads all container types
 ```
 
 ---
